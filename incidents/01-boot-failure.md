@@ -60,9 +60,9 @@ UUID=a88ad6d2-acc5-48bc-9bf2-649344512a07  /data  ext4  defaults,nofail  0  2
 ---
 
 ## Second finding: why `/data` did not mount the first time
-My first `/data` entry did not mount after the first reboot, and `mount -a` printed no error. The cause: I had left the placeholder text in the line instead of pasting my real UUID from `blkid`. A UUID that matches no disk, combined with `nofail`, makes `mount -a` fail silently, because `nofail` suppresses errors for missing devices. So nothing mounted and nothing was reported.
+My first `/data` entry did not mount after the first reboot, and `mount -a` printed no error. The cause: I had left the placeholder text in the line instead of pasting my real UUID from `blkid`. A UUID that matches no disk, combined with `nofail`, makes `mount -a` fail silently, because `nofail` suppresses errors for missing devices. So nothing mounted and nothing was reported. But after I added UUID the /data was mount and was working perfectly fine. 
 
-By the time of recovery that line was no longer in the file (it was replaced when I edited fstab to add the fake line), so I cannot show the original line. This explanation comes from my own account of what I typed.
+After the recovery that line was no longer in the file (it was replaced when I edited fstab to add the fake line), so I cannot show the original line. This explanation comes from my own account of what I typed.
 
 Lesson: `nofail` protects the boot but hides mistakes. After `mount -a`, always confirm with `df -h <mountpoint>` or `findmnt`, and never rely on "no output" alone.
 
