@@ -30,10 +30,10 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 ```
 prep-labs/
   README.md
-  notes/        # my own cheat sheets, written in my own words
+  notes/        # my study notes and cheat sheets
   incidents/    # one write-up per lab: symptom, diagnosis, root cause, fix
   kb/           # public-style knowledge base articles
-  scripts/      # bash and Python helpers I wrote
+  scripts/      # bash and Python helpers
 ```
 
 ---
@@ -52,7 +52,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | ⬜ | `incidents/06-…md` |
 | 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
 
-Labs 3–7 are next. Check that the two write-up links above match your real file names, and remove any link whose file does not exist.
+Labs 3 to 7 are next.
 
 ---
 
@@ -61,26 +61,26 @@ Labs 3–7 are next. Check that the two write-up links above match your real fil
 | Script | What it does |
 |---|---|
 | `scripts/failed_ssh.sh` | Reads an SSH auth log and lists the IP addresses with the most failed password attempts. Tested on a sample log file. |
-
+| `scripts/hello.sh` and `scripts/hello.service` | A small demo service I use to practise systemd faults. |
 
 ---
 
-
 ## Community support practice
 
-I answer real questions on [Ask Ubuntu](https://askubuntu.com/) by reproducing the problem on a lab machine before replying.
+I answered an Ask Ubuntu question after reproducing the problem on a lab machine first:
 
-- Answered a question on nginx status codes and health-check (`/healthz`) endpoints: *(https://askubuntu.com/questions/1552888/is-there-any-way-to-get-status-code-xxx-of-nginx-except-setting-up-stub-status/1570987#1570987)*
+- [Is there any way to get status code (XXX) of Nginx except setting up stub_status page?](https://askubuntu.com/questions/1552888/is-there-any-way-to-get-status-code-xxx-of-nginx-except-setting-up-stub-status/1570987#1570987)
+  Covers checking for a 200 with `curl`, what `000`, `404` and exit codes `22` and `7` mean, and a `/healthz` endpoint.
 
 ---
 
 ## Notes and cheat sheets
 
-- File permissions and groups
-- Capturing and reading packets with `tcpdump`
-- TCP and TLS basics
-
-See the `notes/` folder. 
+- [Processes, packages and systemd](notes/systemd.md)
+- [Packet capture with `tcpdump`](notes/tcpdump.md)
+- [TCP basics](notes/tcp.md)
+- [TLS basics](notes/tls.md)
+- [Gate 1 checkpoint results](notes/gate1.md)
 ---
 
 ## Contact
