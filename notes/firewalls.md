@@ -174,9 +174,17 @@ ufw (verified with `sudo ufw status numbered` after running `sudo ufw allow 22/t
 [ 7] 22/tcp (v6)    ALLOW IN    Anywhere (v6)
 ```
 Default policy: deny incoming, allow outgoing.
-Security group: HTTP 80, SSH 22, HTTPS 443, all from 223.181.22.111/32. The 8080 rule is removed.
+Security group (console shows the name `launch-wizard-5`, ID `sg-0a06d7acb1f451bee`; I call it `lab-sg` in these notes): 3 inbound rules, all saved with real IDs. The 8080 rule is removed.
 
-Still to confirm: the HTTPS 443 rule in `lab-sg` shows a saved ID (`sgr-...`), not `-`.
+| Type | Port | Rule ID |
+|---|---|---|
+| SSH | 22 | `sgr-0cc5a5b65ae189830` |
+| HTTP | 80 | `sgr-0198b54b7826052e6` |
+| HTTPS | 443 | `sgr-0c2b6b6cbb580a5d` |
+
+Sources were set to `223.181.22.111/32` earlier. The Source column was cut off in the last screenshot, so re-check it if my IP changed.
+
+Day 10 status: complete. Both layers verified.
 
 ## Checkpoint
 **Q: How does DROP look different from REJECT to a client?**
