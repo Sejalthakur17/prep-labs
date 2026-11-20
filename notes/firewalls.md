@@ -33,6 +33,7 @@ An EC2 server has two firewalls. A connection must pass both.
    ```
 5. Confirm SSH still works (type a command, open a second SSH session).
 6. Cancel the timer: `sudo atq`, then `sudo atrm <job-number>`
+7. Keep a general SSH rule too: `sudo ufw allow 22/tcp`. The security group already limits who can reach port 22, so ufw does not need to repeat that restriction. This way a changed home IP only needs a security group edit in the console, never a ufw fix over SSH.
 
 Needs `atd` running: `systemctl is-active atd` should print `active`.
 
@@ -60,7 +61,11 @@ Useful rules in the nft output:
 | 3 | 8080 open | `allow 8080/tcp` | `succeeded!` | Both layers allow |
 | 4 | 8080 removed | `allow 8080/tcp` | `Operation timed out` | Security group dropped it |
 
-Proof of the layer: experiment 1 left a `[UFW BLOCK]` line in the log. Experiment 4 left no new line, because the packet never reached the server.
+**How I know which layer answered:**
+- Experiment 1 left a `[UFW BLOCK] DPT=8080` line in `/var/log/ufw.log`, so the packet reached ufw and ufw dropped it.
+- Experiment 4 timed out with ufw allowing 8080 and the listener running, the same server state as Experiment 3, which succeeded. Only the security group changed, so the security group dropped it.
+- Note: the missing log line in Experiment 4 is NOT proof. ufw allows 8080 at that point, so it would not log the packet either way.
+- Direct check: `sudo tcpdump -ni ens5 'tcp port 8080'` (install tcpdump first if missing) shows no SYN arriving when the security group blocks it.
 
 ## Cheat sheet
 
@@ -100,6 +105,7 @@ Proof of the layer: experiment 1 left a `[UFW BLOCK]` line in the log. Experimen
 | Start a test web server | `python3 -m http.server 8080 &` (use `sudo` for port 80) |
 | Stop a background job | `kill %1` or `sudo pkill -f "http.server 8080"` |
 | See blocked packets | `sudo grep "UFW BLOCK" /var/log/ufw.log \| tail -5` |
+| Watch packets arrive | `sudo tcpdump -ni ens5 'tcp port 8080'` |
 | Under the hood | `sudo iptables -L -n -v \| head -40` and `sudo nft list ruleset \| head -60` |
 | My IP as the server sees it | `echo $SSH_CLIENT` |
 | Server time (UTC) | `date` |
@@ -107,7 +113,7 @@ Proof of the layer: experiment 1 left a `[UFW BLOCK]` line in the log. Experimen
 ### AWS security group (console)
 EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules > Add rule > **Save rules**.
 - Source `x.x.x.x/32` means exactly one IP.
-- A new rule shows `-` as its ID until it is saved.
+- A new rule shows `-` as its ID until it is saved. A real saved rule has an ID starting with `sgr-`.
 - Never delete the SSH (22) rule while connected over SSH.
 
 ### Reading a result
@@ -131,7 +137,7 @@ EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules >
 | Escape timer never fires | `atd` is not running | `sudo systemctl enable --now atd`, then `systemctl is-active atd` |
 | `ufw` suddenly turns itself off mid-lab | The `at` timer fired because it was not cancelled | `sudo atrm <job>` right after confirming SSH works, then `sudo ufw enable` |
 | `at` job time looks wrong | Server clock is UTC | Compare against `date` on the server |
-| `ssh: connect to host ... Operation timed out` | Security group or ufw blocks port 22, or my home IP changed | Use EC2 Instance Connect from the console, run `echo $SSH_CLIENT`, update the ufw rule and the security group source |
+| `ssh: connect to host ... Operation timed out` | Security group or ufw blocks port 22, or my home IP changed | Update the security group SSH source to my current public IP in the console. If ufw also restricts 22 to the old IP, that cannot be fixed over SSH, which is why `sudo ufw allow 22/tcp` should stay in place |
 | `Permission denied (publickey)` | Wrong key file, wrong user, or key not in the current folder | Use `-i lab-key.pem` and user `ubuntu`, run from the folder holding the key |
 | `WARNING: UNPROTECTED PRIVATE KEY FILE!` | Key file permissions too open | `chmod 400 lab-key.pem` |
 | `OSError: [Errno 98] Address already in use` | Another process already uses that port | `sudo ss -tlnp \| grep ':8080'`, then kill that PID or the old job |
@@ -139,7 +145,7 @@ EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules >
 | `kill: %1: no such job` | The job is not in this shell | `sudo pkill -f "http.server 8080"` |
 | `ERROR: Could not delete non-existent rule` | The rule text does not match exactly | Run `sudo ufw status numbered` and delete by number |
 | Deleted the wrong rule after deleting two | Rule numbers shift after each delete | Delete the highest number first, re-check with `status numbered` |
-| Leftover `22/tcp ALLOW IN Anywhere` rules | An earlier `ufw allow ssh` or `allow 22` | Delete them by number, but only after confirming a second SSH session works |
+| Leftover `22/tcp ALLOW IN Anywhere` rules | An earlier `ufw allow ssh` or `allow 22` | Safe to keep: the security group already limits who can reach 22. Delete only if ufw must also restrict SSH, and then keep a second SSH session open and the `at` timer running |
 | A ufw allow rule seems ignored | An earlier rule matches first (first match wins) | `sudo ufw status numbered` and check the order |
 | `Chain INPUT (policy DROP)` but ports still open | A ufw allow rule exists for that port | `sudo ufw status verbose` |
 | Lab results look wrong after a break | Leftover rules or listeners from an earlier run | Clean up: `sudo ufw status numbered`, `sudo ss -tlnp`, and check the security group |
@@ -151,19 +157,26 @@ EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules >
 - The server clock is UTC, so `at` job times look different from my local time.
 - Delete ufw rules by number from the highest down, because numbers shift.
 - ufw rules are read top to bottom and the first match wins (`sudo ufw status numbered`).
-- If my home IP changes, the SSH rule stops matching. Backup: EC2 Instance Connect in the AWS console.
+- If my home IP changes, a ufw rule limited to the old IP stops matching and cannot be fixed over SSH. Keep `sudo ufw allow 22/tcp` and let the security group be the IP gate. EC2 Instance Connect is not a reliable backup here, because it connects from AWS addresses that both layers would block.
 - Always cancel the `at` timer after confirming SSH works, or it will turn ufw off mid-lab.
 - Save the security group rules. An unsaved rule shows `-` as its ID and does nothing.
+- A missing log line is not proof of anything when the rule would not have logged anyway. Prove a layer by comparing states, or with `tcpdump`.
 
 ## Final state after cleanup
+ufw (verified with `sudo ufw status numbered` after running `sudo ufw allow 22/tcp`):
 ```
 [ 1] 80/tcp         ALLOW IN    Anywhere
 [ 2] 22/tcp         ALLOW IN    223.181.22.111
 [ 3] 443/tcp        ALLOW IN    Anywhere
-[ 4] 80/tcp (v6)    ALLOW IN    Anywhere (v6)
-[ 5] 443/tcp (v6)   ALLOW IN    Anywhere (v6)
+[ 4] 22/tcp         ALLOW IN    Anywhere
+[ 5] 80/tcp (v6)    ALLOW IN    Anywhere (v6)
+[ 6] 443/tcp (v6)   ALLOW IN    Anywhere (v6)
+[ 7] 22/tcp (v6)    ALLOW IN    Anywhere (v6)
 ```
+Default policy: deny incoming, allow outgoing.
 Security group: HTTP 80, SSH 22, HTTPS 443, all from 223.181.22.111/32. The 8080 rule is removed.
+
+Still to confirm: the HTTPS 443 rule in `lab-sg` shows a saved ID (`sgr-...`), not `-`.
 
 ## Checkpoint
 **Q: How does DROP look different from REJECT to a client?**
