@@ -48,7 +48,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 1 | Boot, service and permission faults | Broken `/etc/fstab` entry (emergency mode), failed nginx service, unreadable web root, port already in use | ✅ | [incidents/01-boot-failure.md](incidents/01-boot-failure.md) |
 | 2 | DNS and HTTP failures | Bad resolver, firewall blocking port 80, reverse proxy pointing at the wrong port | ✅ | [incidents/02-dns-http.md](incidents/02-dns-http.md) |
 | 3 | TLS faults | Expired certificate, hostname mismatch, incomplete chain | ✅ | [incidents/03-tls.md](incidents/03-tls.md) |
-| 4 | Resource exhaustion | CPU load and memory/OOM kill done; full disk and inode exhaustion next | 🟡 | [incidents/04-cpu-memory.md](incidents/04-cpu-memory.md) |
+| 4 | Resource exhaustion | CPU load, memory/OOM kill, full disk, deleted-but-open files, inode exhaustion | ✅ | [incidents/04-resource-exhaustion.md](incidents/04-resource-exhaustion.md) |
 | 5 | Network faults | Bridge misconfiguration (missing port), bonding failover and MTU mismatch, all reproduced in namespaces | ✅ | [incidents/05-bond-bridge-mtu.md](incidents/05-bond-bridge-mtu.md) · [notes/bond-bridge.md](notes/bond-bridge.md) |
 | 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | ⬜ | `incidents/06-…md` |
 | 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
@@ -61,10 +61,10 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 |---|---|---|
 | CPU load | ✅ reproduced | `stress-ng --cpu 2` took load to 1.87 on a 2-CPU instance. Found both workers in `htop` (F6, sort by PERCENT_CPU). `renice +10` only made a difference once another process (`htop`) competed for CPU: the reniced worker dropped to about 92%. Nice values matter under contention only. |
 | Memory and OOM kill | ✅ reproduced | `--vm-bytes 90%` means 90% of *free* memory, and `--vm-bytes 600M` is split across workers, so neither exhausted RAM. A 1500M total did. `stress-ng` reported `passed: 2`, but `dmesg` showed many `Out of memory: Killed process ... (stress-ng-vm)` lines. nginx survived because `stress-ng` sets `oom_score_adj:1000` on its workers. Lesson: check `dmesg`, not the tool's summary. |
-| Full disk | ⬜ next | Fill the disk, find the big folders, clean up. |
-| Deleted but still held open | ⬜ next | `df` shows no space freed after `rm`; `lsof +L1` finds the holder. |
-| Inode exhaustion | ⬜ next | "No space left on device" while `df -h` shows free space; `df -i` shows 100%. |
-| KB article 1 | ⬜ next | A public-style article for the 502 lab. |
+| Full disk | ✅ reproduced | A 2 GB file took root from 41% to 72%. `du` without `-a` listed only directories and hid the file, but `/var` (2.6G) was far larger than its subfolders combined (about 550M), which pointed to a file sitting directly in it. `du -xah` and `find -size +500M` named `/var/big`. |
+| Deleted but still held open | ✅ reproduced | After `rm`, `df` stayed at 3.2G used while `du` showed only 48K for the folder. `lsof +L1` found the holder (`sleep`, PID 4820, `(deleted)`). Killing it freed the space. Also learned that `/tmp` here is tmpfs (RAM, 455M), and that a `tail -f &` holder can race with `rm` or exit on its own. |
+| Inode exhaustion | ✅ reproduced | A loop-mounted filesystem with 2000 inodes failed at file 1989 with "No space left on device" while `df -h` showed 89M free. `df -i` showed 100%. Root baseline for comparison: 16% of 878,080 inodes. |
+| KB article 1 | ⬜ next | A public-style article for the "No space left on device" lab (or the 502 lab). |
 
 ### Lab 5 progress: network faults
 
@@ -75,7 +75,7 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | MTU mismatch | ✅ reproduced | Lowering one veth to MTU 1400 made small pings work while large don't-fragment pings got 100% loss with no error message. Found the path MTU by lowering the ping size until it passed (1372 + 28 bytes of headers = 1400). |
 | Incident write-up | ✅ done | One report covering the bridge, bond and MTU faults and how each looked different. |
 
-Labs 6 and 7 come after Lab 4's disk and inode exercises.
+Labs 6 and 7 come after the Lab 4 knowledge-base article.
 
 ---
 
