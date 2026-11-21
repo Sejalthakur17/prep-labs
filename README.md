@@ -80,7 +80,7 @@ I answered an Ask Ubuntu question after reproducing the problem on a lab machine
 - [Packet capture with `tcpdump`](notes/tcpdump.md)
 - [TCP basics](notes/tcp.md)
 - [TLS basics](notes/tls.md)
-- [Gate 1 checkpoint results](gates/gate1.md)
+- [Gate 1 checkpoint results](notes/gate1.md)
 ---
 
 ## Contact
