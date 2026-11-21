@@ -20,6 +20,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 
 - **Cloud lab:** AWS EC2, Ubuntu Server LTS (26.04), region ap-south-1 (Mumbai). I take an AMI before each "break it" lab and restore afterwards.
 - **Local lab:** a local VM on my Mac, where a lab needs console access or extra network cards.
+- **Network labs (bridge, bond):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
 - All faults are created on throwaway lab machines. No real customer data is used.
 
@@ -48,11 +49,20 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 2 | DNS and HTTP failures | Bad resolver, firewall blocking port 80, reverse proxy pointing at the wrong port | ✅ | [incidents/02-dns-http.md](incidents/02-dns-http.md) |
 | 3 | TLS faults | Expired certificate, hostname mismatch, incomplete chain | ⬜ | `incidents/03-…md` |
 | 4 | Resource exhaustion | CPU load, memory and OOM kill, full disk, inode exhaustion | ⬜ | `incidents/04-…md` |
-| 5 | Network faults | MTU mismatch, bonding failover, bridge misconfiguration | ⬜ | `incidents/05-…md` |
+| 5 | Network faults | Bridge misconfiguration (missing port) and bonding failover reproduced in namespaces; MTU mismatch next; incident write-up still to do | 🟡 | `incidents/05-bond-bridge-mtu.md` (planned) · [notes/bridge-bond.md](notes/bridge-bond.md) |
 | 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | ⬜ | `incidents/06-…md` |
 | 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
 
-Labs 3 to 7 are next.
+### Lab 5 progress
+
+| Part | Status | What I found |
+|---|---|---|
+| Bridge: missing port | ✅ reproduced | Interface stayed `UP` with the right IP, but ping got 100% loss. The only clue was the missing port in `bridge link`. Fixed with `ip link set <port> master br0`. |
+| Bond: active-backup failover | ✅ reproduced | Failover worked in both directions and `Link Failure Count` increased. The bond did not switch back because no `primary` was set. A read right after the link went down showed stale state because of `miimon` polling. |
+| MTU mismatch | ⬜ next | "Small works, big hangs". |
+| Incident write-up | ⬜ to do | One report covering the bridge, bond and MTU faults. |
+
+Labs 3, 4, 6 and 7 are next, after finishing Lab 5.
 
 ---
 
@@ -80,7 +90,9 @@ I answered an Ask Ubuntu question after reproducing the problem on a lab machine
 - [Packet capture with `tcpdump`](notes/tcpdump.md)
 - [TCP basics](notes/tcp.md)
 - [TLS basics](notes/tls.md)
+- [Linux bridge and bond with network namespaces](notes/bridge-bond.md) (commands, lab log, troubleshooting table, interview Q&A)
 - [Gate 1 checkpoint results](notes/gate1.md)
+
 ---
 
 ## Contact
