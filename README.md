@@ -47,22 +47,35 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 |---|---|---|---|---|
 | 1 | Boot, service and permission faults | Broken `/etc/fstab` entry (emergency mode), failed nginx service, unreadable web root, port already in use | ✅ | [incidents/01-boot-failure.md](incidents/01-boot-failure.md) |
 | 2 | DNS and HTTP failures | Bad resolver, firewall blocking port 80, reverse proxy pointing at the wrong port | ✅ | [incidents/02-dns-http.md](incidents/02-dns-http.md) |
-| 3 | TLS faults | Expired certificate, hostname mismatch, incomplete chain | ⬜ | `incidents/03-…md` |
-| 4 | Resource exhaustion | CPU load, memory and OOM kill, full disk, inode exhaustion | ⬜ | `incidents/04-…md` |
-| 5 | Network faults | Bridge misconfiguration (missing port) and bonding failover reproduced in namespaces; MTU mismatch next; incident write-up still to do | 🟡 | `incidents/05-bond-bridge-mtu.md` (planned) · [notes/bridge-bond.md](notes/bridge-bond.md) |
+| 3 | TLS faults | Expired certificate, hostname mismatch, incomplete chain | ✅ | [incidents/03-tls.md](incidents/03-tls.md) |
+| 4 | Resource exhaustion | CPU load and memory/OOM kill done; full disk and inode exhaustion next | 🟡 | [incidents/04-cpu-memory.md](incidents/04-cpu-memory.md) |
+| 5 | Network faults | Bridge misconfiguration (missing port), bonding failover and MTU mismatch, all reproduced in namespaces | ✅ | [incidents/05-bond-bridge-mtu.md](incidents/05-bond-bridge-mtu.md) · [notes/bond-bridge.md](notes/bond-bridge.md) |
 | 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | ⬜ | `incidents/06-…md` |
 | 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
 
-### Lab 5 progress
+Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md).
+
+### Lab 4 progress: resource exhaustion
+
+| Part | Status | What I found |
+|---|---|---|
+| CPU load | ✅ reproduced | `stress-ng --cpu 2` took load to 1.87 on a 2-CPU instance. Found both workers in `htop` (F6, sort by PERCENT_CPU). `renice +10` only made a difference once another process (`htop`) competed for CPU: the reniced worker dropped to about 92%. Nice values matter under contention only. |
+| Memory and OOM kill | ✅ reproduced | `--vm-bytes 90%` means 90% of *free* memory, and `--vm-bytes 600M` is split across workers, so neither exhausted RAM. A 1500M total did. `stress-ng` reported `passed: 2`, but `dmesg` showed many `Out of memory: Killed process ... (stress-ng-vm)` lines. nginx survived because `stress-ng` sets `oom_score_adj:1000` on its workers. Lesson: check `dmesg`, not the tool's summary. |
+| Full disk | ⬜ next | Fill the disk, find the big folders, clean up. |
+| Deleted but still held open | ⬜ next | `df` shows no space freed after `rm`; `lsof +L1` finds the holder. |
+| Inode exhaustion | ⬜ next | "No space left on device" while `df -h` shows free space; `df -i` shows 100%. |
+| KB article 1 | ⬜ next | A public-style article for the 502 lab. |
+
+### Lab 5 progress: network faults
 
 | Part | Status | What I found |
 |---|---|---|
 | Bridge: missing port | ✅ reproduced | Interface stayed `UP` with the right IP, but ping got 100% loss. The only clue was the missing port in `bridge link`. Fixed with `ip link set <port> master br0`. |
 | Bond: active-backup failover | ✅ reproduced | Failover worked in both directions and `Link Failure Count` increased. The bond did not switch back because no `primary` was set. A read right after the link went down showed stale state because of `miimon` polling. |
-| MTU mismatch | ⬜ next | "Small works, big hangs". |
-| Incident write-up | ⬜ to do | One report covering the bridge, bond and MTU faults. |
+| MTU mismatch | ✅ reproduced | Lowering one veth to MTU 1400 made small pings work while large don't-fragment pings got 100% loss with no error message. Found the path MTU by lowering the ping size until it passed (1372 + 28 bytes of headers = 1400). |
+| Incident write-up | ✅ done | One report covering the bridge, bond and MTU faults and how each looked different. |
 
-Labs 3, 4, 6 and 7 are next, after finishing Lab 5.
+Labs 6 and 7 come after Lab 4's disk and inode exercises.
 
 ---
 
@@ -90,6 +103,7 @@ I answered an Ask Ubuntu question after reproducing the problem on a lab machine
 - [Packet capture with `tcpdump`](notes/tcpdump.md)
 - [TCP basics](notes/tcp.md)
 - [TLS basics](notes/tls.md)
+- [Firewalls on EC2: security groups and `ufw`](notes/firewalls.md)
 - [Linux bridge and bond with network namespaces](notes/bond-bridge.md) (commands, lab log, troubleshooting table, interview Q&A)
 - [Gate 1 checkpoint results](notes/gate1.md)
 
