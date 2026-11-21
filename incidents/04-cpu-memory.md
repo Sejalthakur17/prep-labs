@@ -100,10 +100,3 @@ Note: `free` was 279Mi but `available` was 590Mi. Linux uses spare RAM as cache,
 | "App just died" | Kernel log | `sudo dmesg -T \| grep -i oom` |
 | "Is it swapping?" | si/so columns | `vmstat 1` |
 
----
-
-## Open items
-
-- [ ] Stop lab1 in the console (Instance state, Stop)
-- [ ] Decide whether to keep or delete AMI `lab1-before-day13` (if created)
-- [ ] Day 14: disk-full and inode problems, first KB article
