@@ -27,6 +27,8 @@ echo | openssl s_client -connect HOST:443 -servername NAME -CAfile root.pem 2>&1
 - **Expired:** renew the certificate, reload nginx.
 - **Wrong name:** reissue with the correct `subjectAltName`, or use the right hostname.
 - **Incomplete chain:** build `fullchain.pem` (leaf first, then intermediate), point `ssl_certificate` at it, reload nginx.
+- After any fix, rerun the s_client command. Expected: `Verify return code: 0 (ok)`.
+- **Self-signed:** install a certificate from a trusted CA, or give clients the CA file (`curl --cacert`).
 
 ```bash
 sudo sh -c 'cat leaf.pem int.pem > fullchain.pem'
@@ -56,4 +58,17 @@ Expected: leaf issued by the intermediate, then the intermediate issued by the r
 - Run `nginx -t` before every reload or restart.
 
 ## Customer reply
-Your visitors see a warning because the site's security certificate, like an ID card, expired on <expiry date>. Browsers refuse expired IDs to protect people. Renewing the certificate and reloading the web server fixes it. After renewing, open the site and check the padlock. Set a reminder 30 days before the next expiry.
+
+*Replies are templates; dates are examples.*
+
+**Expired certificate**
+Thanks for reporting this. Your visitors see a warning because the site's security certificate, like an ID card, expired on <expiry date>. Browsers refuse expired IDs to protect people. We have renewed the certificate and reloaded the web server. Please open the site and check that the padlock shows with no warning. We have also set a reminder 30 days before the next expiry.
+
+**Wrong name**
+Thanks for the details. The security certificate was issued for a different address than the one your visitors type, like an ID card with the wrong name on it, so browsers warn them. We reissued it for the correct address. Please reload the site and check for the padlock.
+
+**Incomplete chain**
+Thanks for flagging this. The certificate is valid, but the server did not send the supporting certificates that let some browsers and tools confirm it, so they showed an error. We have added them and reloaded the web server. Please retry from the device where you saw the error.
+
+**Self-signed certificate**
+Thanks for the details. The certificate on your site was created by the server itself rather than by a trusted authority, so browsers do not recognise it, like an ID card you printed yourself. We replaced it with one from a trusted authority and reloaded the web server. Please reload the site and check for the padlock.

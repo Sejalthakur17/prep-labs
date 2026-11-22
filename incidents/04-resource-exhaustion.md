@@ -44,7 +44,7 @@ Note: `free` was 279Mi but `available` was 590Mi. Linux uses spare RAM as cache,
   - `htop` (F6, sort by PERCENT_CPU) to find the process
   - `pgrep -a stress` to get PIDs
   - `sudo renice +10 -p 1458` to lower priority
-  - `kill 1456` to stop it
+  - `kill 1456` (the parent `stress-ng` process; 1458 and 1459 were its workers)
 - **What I saw:**
   - Two `stress-ng-cpu` workers at the top of htop (PIDs 1458, 1459).
   - Load average 1.87, 1.04, 0.48. The 1-min value is higher than the 15-min value, so the load is recent.
@@ -73,7 +73,7 @@ Note: `free` was 279Mi but `available` was 590Mi. Linux uses spare RAM as cache,
 - **Cause:** Memory exhaustion. The workers asked for far more than the 908Mi available, with no swap.
 - **Fix / action:** Killed workers recovered on their own. No reboot was needed.
 - **Lessons:**
-  1. `--vm-bytes 90%` means 90% of *free* memory at that moment, not total RAM.
+  1. `--vm-bytes 90%` means 90% of available memory at that moment, not total RAM.
   2. `--vm-bytes` is split across workers, so 600M with 2 workers is 300MB each. Always read stress-ng's "using X per stressor" line to check the real size.
   3. A tool's summary can say "passed" while the kernel killed processes. **Check dmesg, not the program's report.**
   4. The victim isn't always the cause. stress-ng sets `oom_score_adj:1000`, so its workers were picked first and nginx survived. Normally the kernel picks by memory use and score.
@@ -192,11 +192,26 @@ The same error, **"No space left on device"**, came from three different causes.
 
 ---
 
-## Customer reply (draft)
+## Customer reply
 
-> Thanks for the details. "No space left on device" can come from three different causes, so I checked each one. On your instance the space is used by <what you found>. I freed it by <what you did>, and writes now succeed.
->
-> To stop this recurring, I recommend setting an alert at about 80% for disk usage, inode usage and memory, rotating or capping logs, and restarting services that hold deleted files open after any large cleanup. Let me know if it comes back and I will look again.
+**High CPU**
+Thanks for letting us know. Your server was slow because one program was using all of its processing power. We identified it, lowered its priority so everything else could keep running, and then stopped it. Is this a job that should run regularly? If so, we can schedule it for a quieter time or look at a larger instance.
+
+**Disk full (one large file)**
+Thanks for the details. Your server stopped saving data because its disk was
+full: a single 2 GB file in /var was using most of the space. After checking
+it was safe to remove, we deleted it and the disk is back to 41% used. To
+stop this recurring, we recommend an alert at 80% disk use and a limit on
+log size.
+
+**Deleted, but space not freed**
+Thanks for your patience. After the large file was deleted, the disk still looked full because a running program still had it open, and the system keeps the space until that program lets go. We restarted that program and the space came back. After deleting large files, restarting the service that used them is usually needed.
+
+**Out of file slots (inodes)**
+Your disk shows free space, but it had run out of file "slots". Every file, even an empty one, uses one, and the number is fixed when the disk is set up. We cleared the unneeded small files and new files can be saved again. We recommend an alert on slot usage as well as disk space.
+
+**Out of memory**
+Your application stopped because the server ran out of memory and the system shut the program down to protect itself. We have confirmed what was using the memory. Options: reduce its memory use, add swap space, or move to a larger instance. Could you tell us what changed recently (a deploy, more traffic)?
 
 ## What to monitor
 
