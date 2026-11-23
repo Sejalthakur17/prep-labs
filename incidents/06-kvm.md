@@ -30,7 +30,9 @@ Original file state, saved to `~/incidents/original-state.txt`:
 -rw-r--r-- 1 root         root 654180352 Nov 23 07:47 vm1.qcow2
 ```
 
-Note: while the guest is shut off, `vm1.qcow2` is `root:root` mode 644. Later, while the guest was running, it showed `libvirt-qemu kvm` with a `+` (ACL). I believe libvirt relabels the disk when it starts a guest, but I did not confirm that.
+Note: while the guest is shut off, `vm1.qcow2` is `root:root` mode 644. Later, while the guest was running, it showed `libvirt-qemu kvm` with a `+` (ACL). I believe libvirt relabels the disk when it starts a guest, but I did not confirm that. To confirm: `virsh dumpxml vm1 | grep -A3 seclabel` should show a `dac` entry with an image label if that is what happens.
+
+Note on size: `vm1.qcow2` is 654,180,352 bytes (about 624 MiB) here, but it was only 55.7 MiB right after first boot (see [notes/kvm-first-guest.md](../notes/kvm-first-guest.md)). The Day 17 `qemu-img info` showed 58,458,112 bytes before the snapshot, and the listing above shows 654,180,352 bytes afterwards, a jump of about 568 MiB. The only large event in between was the `clean` snapshot, taken while the guest was running, so the guest's RAM state was probably stored inside the qcow2 (an internal snapshot). Not yet confirmed. To check: `sudo qemu-img info -U /var/lib/libvirt/images/vm1.qcow2` and read the snapshot VM SIZE column.
 
 ## Order of checks for any "VM will not start" ticket
 
@@ -60,7 +62,7 @@ error: Cannot access storage file '/var/lib/libvirt/images/vm1.qcow2' (as uid:64
 
 **Root cause:** the disk file was moved while the guest was still defined with the old path.
 
-**Fix:** `sudo mv vm1.bak vm1.qcow2`, then `virsh start vm1`.
+**Fix:** `sudo mv /var/lib/libvirt/images/vm1.bak /var/lib/libvirt/images/vm1.qcow2`, then `virsh start vm1`.
 
 **Verify:** `virsh list` showed `running`, and `ssh ubuntu@192.168.122.212 "hostname"` returned `ubuntu`.
 
@@ -97,7 +99,7 @@ sudo chmod 644 /var/lib/libvirt/images/vm1.qcow2
 
 **Verify:** guest started, `running`, SSH returned `ubuntu`.
 
-**What I learned:** the lab guide suggested restoring `libvirt-qemu:kvm` with mode 600, but the file's original state was `root:root` 644. Recording `ls -l` first meant I restored the real original rather than someone else's assumption.
+**What I learned:** the lab guide suggested restoring `libvirt-qemu:kvm` with mode 600, but the file's original state was `root:root` 644. Recording `ls -l` first meant I restored the real original rather than someone else's assumption. Here the failure came from QEMU's own `open()` call (the message starts `qemu-system-x86_64: ... Could not open`). In B2 below the failure came earlier, from libvirt's access check.
 
 **What a customer should monitor:** file ownership and mode of everything under `/var/lib/libvirt/images/`, especially after backups, restores or manual copies.
 
@@ -122,10 +124,12 @@ error: Cannot access storage file '/home/ubuntu/vm1.qcow2' (as uid:64055, gid:99
 
 **Diagnosis:**
 - `ls -ld /home/ubuntu` showed `drwxr-x--- ubuntu ubuntu` (mode 750). `libvirt-qemu` is "other" for that directory, so it cannot enter it.
-- `sudo dmesg | grep -i apparmor | tail -5` showed only `apparmor="STATUS"` profile_replace lines and no `apparmor="DENIED"` line.
+- `sudo dmesg | grep -i apparmor | tail -5` showed only `apparmor="STATUS"` profile_replace lines and no `apparmor="DENIED"` line. The profile_replace lines are libvirt refreshing the per-guest AppArmor profile (`libvirt-<uuid>`, shown as `enforcing` in `virsh dominfo`). I believe libvirt builds that profile from the guest XML, so a disk path listed in the XML should not be blocked by AppArmor. I did not verify this.
 - `/var/log/libvirt/qemu/vm1.log` ended with `shutting down, reason=failed` and no QEMU error. The `libvirtd` journal had the same "Cannot access storage file" line. So libvirt refused before QEMU even launched.
 
 **Root cause:** the disk was in a home directory the QEMU user cannot reach. The evidence points to directory permissions rather than AppArmor. I did not prove it by changing the directory mode. A follow-up test is `chmod o+x /home/ubuntu` to see whether the start then fails with a real AppArmor denial.
+
+**Why B1 and B2 failed differently (hypothesis, not tested):** libvirt's pre-check ("Cannot access storage file ... as uid:64055") probably only needs to reach the file, meaning search (execute) permission on every directory in the path. It does not need to read it. In B1 the directories were fine, so the pre-check passed and QEMU failed later at `open()`. In B2 `/home/ubuntu` was mode 750, so the pre-check failed first. This matches the evidence in both faults but is not proven.
 
 **Fix:** put the original path back. `virsh edit` rejected my edit twice:
 ```
@@ -139,7 +143,7 @@ grep "source file" ~/vm1.xml
 virsh define ~/vm1.xml
 ```
 
-**Verify:** `virsh domblklist vm1` showed the original path, the guest started, SSH returned `ubuntu`. Then I removed the copy and the XML file and confirmed with `ls ~/vm1.*`.
+**Verify:** `virsh domblklist vm1` showed the original path, the guest started, SSH returned `ubuntu`. The copy in my home directory had already been deleted by a `sudo rm ~/vm1.qcow2` in an earlier pasted block (so my final `rm` printed "cannot remove" for it). The final `rm` removed `vm1.xml`, and `ls ~/vm1.*` confirmed both were gone. The original in `/var/lib/libvirt/images/` was never touched because I copied the disk instead of moving it.
 
 **What I learned:** two different "Permission denied" errors exist. B1 was QEMU failing to open a file. B2 was libvirt's own access check failing first, and its message includes the uid and gid it checked as. `dumpxml`, `sed`, `define` is a safer way to change a guest's XML than an interactive edit when you cannot see the mistake.
 
@@ -175,7 +179,7 @@ ssh -o ConnectTimeout=5 ubuntu@192.168.122.212
 2. `virsh reboot vm1`: SSH still failed, now with `No route to host`.
 3. `virsh destroy vm1` then `virsh start vm1`: `virbr0` showed `UP,LOWER_UP`, and SSH returned `ubuntu`.
 
-**Why:** my understanding is that the running guest's virtual NIC stayed attached to the old, deleted bridge. A reboot happens inside the same QEMU process and does not re-attach it. A full stop and start does. I did not inspect the tap device to confirm this.
+**Why:** my understanding is that the running guest's virtual NIC stayed attached to the old, deleted bridge. A reboot happens inside the same QEMU process and does not re-attach it. A full stop and start does. Supporting evidence from the log: `virsh domifaddr` showed the same device, `vnet6`, before the network was destroyed and after the reboot, and a new one, `vnet7`, only after `virsh destroy` and `start`. I did not inspect the tap device itself (`ip link show vnet6` would show whether it still has a bridge as master), so this is not confirmed.
 
 **Variant (guest stopped first):**
 ```
@@ -212,7 +216,13 @@ Then `virsh domstate --reason vm1` printed `paused (I/O error)`, and `df -h` sho
 
 **Diagnosis:** `df -h` on the host showed 100%. My `du -sh /var/lib/libvirt/images/*` failed with "No such file or directory" because the shell expanded the `*` without root, so it could not list the directory. Running `du` under `sudo` as a whole (for example `sudo du -sh /var/lib/libvirt/images`) is the correct form.
 
-**Root cause:** the host filesystem was full. `vm1.qcow2` is thin-provisioned, so the guest thinks it has 19G, but the file only grows when data is written. When the host had no space, the write failed and libvirt paused the guest to protect its data. The image grew from about 650 MB to 3.07 GB (`vm1.qcow2` showed `3067019264`) during the `dd`.
+**Root cause:** the host filesystem was full. `vm1.qcow2` is thin-provisioned, so the guest thinks it has 19G, but the file only grows when data is written. When the host had no space, the write failed and libvirt paused the guest to protect its data.
+
+**Why 300 MB free was not enough for the snapshot:** a snapshot of a running guest writes the guest's RAM state (1 GiB here) into the image. The error text ("Error while writing VM state") fits this, but I did not test it.
+
+**Image size during the incident:** `vm1.qcow2` was 685,768,704 bytes at 07:58 (when I copied it for B2) and 3,067,019,264 bytes (mtime 08:12) in the final listing, after `virsh resume`. Right after I deleted `filler`, host `df` showed 4.3G used, up only about 0.3G from the 4.0G baseline, so the big growth came after space was freed. Growth from 07:58 to 08:12 was about 2.38 GB, which roughly matches the `dd` request (2000 MiB) plus the roughly 300 MiB I had left free. Whether that first 300 MiB went to the failed `s2` snapshot or to the start of the `dd`, I cannot tell from the log.
+
+**Why the `dd` hung and what happened to it:** the guest was paused by the I/O error, so the `dd` could not finish and my `ssh` command hung until I pressed Ctrl+C. Ctrl+C stopped only my local `ssh`. My best explanation is that the `dd` inside the guest kept going after `virsh resume`, which fits the size growth and the `rm -f ~/big` in my fix, but I never checked for a running `dd`. Not tested. To confirm, rerun with `ssh -t` so Ctrl+C reaches `dd`, check `pgrep -a dd` in the guest, and record `ls -l` of the image before the `dd`, right after the failure, and after cleanup.
 
 **Fix:**
 ```
@@ -227,6 +237,14 @@ ssh ubuntu@192.168.122.212 "rm -f ~/big; hostname; df -h /"
 **What I learned:** freeing space does not automatically unpause the guest. It stayed `paused (I/O error)` until I ran `virsh resume`. Also, `rm` inside the guest does not shrink the qcow2 file on the host. Not tested: whether `fstrim` inside the guest reclaims space (the QEMU command line shows `discard=unmap`).
 
 **What a customer should monitor:** free space on the filesystem holding the images, with an alert well before 100%. Thin-provisioned disks can fill a host without any warning from inside the guest.
+
+---
+
+## Customer reply (Fault D): draft
+
+> Hi Sam, thanks for letting us know, and I'm sorry. A frozen server and a failed snapshot at a critical moment is stressful. What I've confirmed: your server's data is intact, but the disk on the physical machine it runs on had filled up, so the server paused itself rather than risk corrupting anything. I've freed space and resumed it, and it's running normally again. I don't yet know what filled the disk. I'll investigate that next and send you what I find by end of day tomorrow. To prevent a repeat, I recommend an alert when that disk passes 80%, and I can help set that up.
+
+TODO: rewrite this in my own words, and add a second reply for another fault (the network one is a good choice).
 
 ---
 
@@ -253,7 +271,7 @@ ssh ubuntu@192.168.122.212 "rm -f ~/big; hostname; df -h /"
 ## Mistakes I made (and what I changed)
 
 - Pasted the `mv` command twice, so the second one failed with "cannot stat". Fix: run each step once and read the output before the next.
-- Put a cleanup `rm` in the same pasted block as the experiment, so it ran before I had looked at the result. Fix: clean up in a separate step.
+- Put a cleanup `rm` in the same pasted block as the experiment, so it ran before I had looked at the result (it deleted the copied disk while the guest definition still pointed at it; harmless here because the guest was not running and I had copied, not moved, the original). Fix: clean up in a separate step.
 - Ran `du` on a glob without root. Fix: put `sudo` in front of the whole command.
 - Edited XML interactively and broke the schema. Fix: scripted edit with `virsh define`.
 
@@ -261,5 +279,5 @@ ssh ubuntu@192.168.122.212 "rm -f ~/big; hostname; df -h /"
 
 1. **A VM will not start. Where do you look?** The `virsh start` error, then the QEMU log, then the `libvirtd` journal, then the disk path, permissions, network and free space.
 2. **Why can root move a file that the VM cannot read?** QEMU runs as the unprivileged `libvirt-qemu` user, so it needs read and write access in its own right.
-3. **Why does a full host break a guest with free space?** The qcow2 disk is thin-provisioned, so the guest's free space is not backed by host space.
+3. **Why can a full host break a guest that still shows free space?** The qcow2 disk is thin-provisioned, so the guest's free space is not backed by host space.
 4. **The guest is running but unreachable. What now?** Check the libvirt network and bridge, then restart the guest if its NIC was attached to the old bridge.
