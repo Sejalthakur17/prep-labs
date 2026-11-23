@@ -97,7 +97,10 @@ virsh snapshot-revert vm1 clean
 | Check | Result |
 |---|---|
 | Base image | qcow2, 593 MiB on disk, 3.5 GiB virtual size |
-| Overlay after first boot | 55.7 MiB on disk, 20 GiB virtual size, backing file = the base image |
+| Overlay after first boot (before any snapshot) | 55.7 MiB on disk, 20 GiB virtual size, backing file = the base image |
+| Overlay later (Day 18 baseline, after the `clean` snapshot) | 654,180,352 bytes (about 624 MiB), up about 568 MiB from 58,458,112 bytes before the snapshot. Likely the guest's RAM state stored inside the file by the internal snapshot; not confirmed (see snapshot section) |
+| Guest kernel | 6.8.0-147-generic (from the login banner). Host kernel not recorded; run `uname -r` on `kvm-host` for the Nov 19 comparison table |
+| AppArmor | `virsh dominfo` shows `Security model: apparmor`, label `libvirt-<uuid> (enforcing)`: each guest gets its own profile |
 | Guest root filesystem | 19G total, 1.7G used (grown from the 3.5 GiB image) |
 | `cloud-init status` | `done` |
 | Guest address | 192.168.122.x from DHCP (first guest .67, rebuilt guest .212) |
@@ -105,7 +108,7 @@ virsh snapshot-revert vm1 clean
 | Storage pool | `images`, active, autostart yes |
 | Memory | 1024 MiB works; `virt-install` warns that 3072 MiB is recommended for Ubuntu 24.04 |
 | Guest hostname | `ubuntu` (the cloud image default) |
-| Disk file owner while the guest is shut off (Day 18) | `vm1.qcow2` was `root:root` 644; while the guest was running it showed `libvirt-qemu kvm` with a `+` (ACL) |
+| Disk file owner while the guest is shut off (Day 18) | `vm1.qcow2` was `root:root` 644; while the guest was running it showed `libvirt-qemu kvm` with a `+` (ACL). To confirm the relabel: `virsh dumpxml vm1 \| grep -A3 seclabel` |
 
 ---
 
@@ -151,6 +154,7 @@ Each new guest has its own SSH host key, and addresses can be reused. If a new g
 ## Snapshot behaviour I observed
 
 - `virsh snapshot-create-as vm1 clean` on a running guest created a snapshot whose State column says `running`. libvirt stores it inside `vm1.qcow2` (an internal snapshot).
+- Because the guest was running, the snapshot probably also stored its RAM state (1 GiB) in the same file. That would explain why `vm1.qcow2` grew from 58,458,112 bytes (55.7 MiB, measured just before) to 654,180,352 bytes (about 624 MiB) by the Day 18 baseline, a jump of about 568 MiB. Not confirmed yet: run `sudo qemu-img info -U /var/lib/libvirt/images/vm1.qcow2` and read the snapshot VM SIZE column.
 - After `virsh snapshot-revert vm1 clean`, the domain ID changed from 2 to 3 and the network device from `vnet1` to `vnet2`, so libvirt restored the guest into a new QEMU process.
 - The first SSH after the revert failed with `No route to host`. About 15 seconds later `ping` showed 0% loss, SSH worked, and `cat /etc/hostname` printed `ubuntu`.
 - I did not confirm why the route was missing for a few seconds. A likely cause is the guest's network device being recreated. Next time I will check `ip neigh` on the host while it happens.
@@ -179,7 +183,7 @@ The guest sent a DHCP request on its virtual NIC. libvirt runs dnsmasq on `virbr
 cloud-init read `user-data` from the `cidata` disk (`seed.img`) on first boot and wrote the key to `/home/ubuntu/.ssh/authorized_keys`.
 
 **Why use an overlay instead of copying the image?**
-It is created instantly and stores only changes (55.7 MiB after first boot). The base stays clean, so many guests can share one template. The cost: the overlay depends on the base, so deleting or moving the base breaks every overlay.
+It is created instantly and stores only changes (55.7 MiB after first boot, before any snapshot). The base stays clean, so many guests can share one template. The cost: the overlay depends on the base, so deleting or moving the base breaks every overlay.
 
 **Why can't I SSH to the guest from outside the host?**
 Its address is private and NATed behind `virbr0`. Only the host can reach it. To get in from elsewhere, jump through the host or use a bridged network.
@@ -188,10 +192,13 @@ Its address is private and NATed behind `virbr0`. Only the host can reach it. To
 First what key cloud-init was actually given (`cat user-data`, then confirm the seed was rebuilt and the guest created after that). Then whether the private key is mode 600 and the right user and address are used. Last, `virsh console` or the guest's `/var/log/cloud-init.log` if I can get in another way.
 
 **What does a snapshot protect you from, and what does it not?**
-It rolls the guest back to a known state quickly. It is not a backup: an internal snapshot lives inside the same disk file, so losing that file loses both.
+It rolls the guest back to a known state quickly. It is not a backup: an internal snapshot lives inside the same disk file, so losing that file loses both. Taking one of a running guest also needs host disk space for the guest's RAM state, so it can fail on a nearly full host.
 
 ## Next time (not tried yet)
 
+- Confirm the overlay size jump: `sudo qemu-img info -U /var/lib/libvirt/images/vm1.qcow2` and read the snapshot VM SIZE column.
+- Confirm the disk relabel: `virsh dumpxml vm1 | grep -A3 seclabel`.
+- `virsh console vm1` printed `Connected` and I left without logging in. The cloud-init file sets no password for `ubuntu`, so I expect the console shows boot messages but cannot log in. Not tested. Press Enter after connecting to see a login prompt, and exit with Ctrl+].
 - Reach the guest from my Mac in one command: `ssh -J ubuntu@<kvm-host-ip> ubuntu@<guest-ip>`. This needs my Mac's public key as a second line under `ssh_authorized_keys` in `user-data`.
 - Before stopping `kvm-host`, shut the guest down cleanly: `virsh shutdown vm1`. The guest definition persists, but autostart is disabled, so start it again with `virsh start vm1`.
 - Day 18 (Lab 6) used `vm1` for the fault exercises. Done: missing disk, permission denied and wrong path, no guest network, full host disk. See [incidents/06-kvm.md](../incidents/06-kvm.md).
