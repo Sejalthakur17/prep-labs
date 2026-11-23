@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 23 Nov 2026 (through Day 16: KVM host built).*
+*Last updated: 23 Nov 2026 (through Day 18: KVM fault lab done).*
 
 ---
 
@@ -22,7 +22,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 
 - **Cloud lab:** AWS EC2, Ubuntu Server LTS (26.04), region ap-south-1 (Mumbai). I take an AMI before each "break it" lab and restore afterwards.
 - **Local lab:** a local VM on my Mac, where a lab needs console access or extra network cards.
-- **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. I stop it when I'm not using it.
+- **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. Guests are built from the Ubuntu 24.04 cloud image and sit on libvirt's NAT network (`virbr0`, 192.168.122.0/24), so I reach them from `kvm-host`, not from my Mac. I stop `kvm-host` when I'm not using it.
 - **Network labs (bridge, bond, MTU):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
 - All faults are created on throwaway lab machines. No real customer data is used.
@@ -53,7 +53,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 3 | TLS faults | Expired certificate, hostname mismatch, incomplete chain, self-signed certificate | ✅ | [incidents/03-tls.md](incidents/03-tls.md) |
 | 4 | Resource exhaustion | CPU load, memory/OOM kill, full disk, deleted-but-open files, inode exhaustion | ✅ | [incidents/04-resource-exhaustion.md](incidents/04-resource-exhaustion.md) |
 | 5 | Network faults | Bridge missing a port, bond with a dead member, MTU mismatch, firewall dropping ICMP "fragmentation needed", all reproduced in namespaces | ✅ | [incidents/05-bond-bridge-mtu.md](incidents/05-bond-bridge-mtu.md) · [notes/bond-bridge.md](notes/bond-bridge.md) |
-| 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | 🟡 | `incidents/06-…md` |
+| 6 | Virtualization (KVM/libvirt) | Guest will not start (missing disk, permission denied, disk in an unreachable path), guest running but no network, full host disk pausing the guest | ✅ | [incidents/06-kvm.md](incidents/06-kvm.md) · [notes/kvm-first-guest.md](notes/kvm-first-guest.md) |
 | 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
 
 Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md).
@@ -93,7 +93,16 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | KVM host on EC2 | ✅ built | A normal EC2 instance is already a VM and hides the CPU's virtualization extensions, so I launched `kvm-host` (`m7i-flex.large`, 2 vCPU) with nested virtualization enabled. `egrep -c '(vmx\|svm)' /proc/cpuinfo` printed 4 on 2 vCPUs because Intel lists both a `flags` and a `vmx flags` line per CPU. `grep -c '^flags.*vmx'` gave 2, equal to `nproc`, and `kvm-ok` confirmed acceleration. |
 | Install the stack | ✅ fixed | `qemu-kvm` is a virtual package on 26.04, so apt aborted the whole install, and `usermod` then failed because the `libvirt` group did not exist yet. Installing `qemu-system-x86` fixed both. Write-up: [kb/qemu-kvm-no-installation-candidate-ubuntu-26-04.md](kb/qemu-kvm-no-installation-candidate-ubuntu-26-04.md). |
 | Verify | ✅ passed | `virsh list --all` ran cleanly, `/dev/kvm` exists (group `kvm`), `libvirtd` is active, and the `default` network is active with autostart. The checks are scripted in [scripts/verify-kvm-host.sh](scripts/verify-kvm-host.sh). |
-| First guest VM | ⬜ next | Ubuntu cloud image, qcow2 overlay disk, cloud-init seed, `virt-install --import`. |
+| First guest VM | ✅ built | Built `vm1` from the Ubuntu 24.04 cloud image on the 26.04 host: a qcow2 overlay on the 593 MiB base image, a cloud-init seed (`user-data` → `seed.img`) and `virt-install --import`. The first guest rejected my SSH key (`Permission denied (publickey)`): `user-data` still held the template's placeholder key, so cloud-init installed a key that matched nothing. Rebuilt it with `$(cat ~/.ssh/id_ed25519.pub)` and a fresh overlay, because cloud-init applies the user and key only on first boot. `cloud-init status` then reported `done` and the root filesystem grew to 19G. Notes: [notes/kvm-first-guest.md](notes/kvm-first-guest.md). |
+| Guest network and storage | ✅ explored | `vm1` got an address from libvirt's DHCP on `virbr0` (NAT, gateway 192.168.122.1, range .2 to .254) and is reachable only from `kvm-host`. The overlay was 55.7 MiB on disk after first boot against a 20 GiB virtual size, with the base image as its backing file. `qemu-img info` on a running guest fails with "Failed to get shared write lock"; `-U` reads it safely. |
+| Snapshot and revert | ✅ done | Took a snapshot of the running guest, ran `rm` on `/etc/hostname`, then reverted. libvirt restarted the guest in a new QEMU process (domain ID 2 → 3), SSH said "No route to host" for about 15 seconds, then worked and the file was back. Next time I will show the file missing before the revert. |
+| Fault A: missing disk | ✅ reproduced | After moving `vm1.qcow2` away, `virsh start` printed the exact missing path in its first error line, and `virsh domblklist` showed the config still pointed at it. The error also showed `uid:64055, gid:991`, the unprivileged user libvirt checks access as. |
+| Fault B: permissions and wrong path | ✅ reproduced | With mode 000 on the disk, `virsh start` printed QEMU's `Could not open ... Permission denied`, repeated in the QEMU log and the `libvirtd` journal. I restored the owner and mode I had recorded first (`root:root` 644), not the ones the lab guide suggested. With the disk copied into `/home/ubuntu`, libvirt refused before QEMU launched. There was no AppArmor `DENIED` line in `dmesg` and the home directory was mode 750, so the evidence points to directory permissions rather than AppArmor. `virsh edit` rejected my fix twice on schema validation, so I used `virsh dumpxml`, `sed` and `virsh define`. |
+| Fault C: no guest network | ✅ reproduced | After `virsh net-destroy default` the guest stayed `running`, `virbr0` disappeared and SSH timed out, yet `virsh domifaddr` still listed the old IP (stale). `virsh net-start default` brought the bridge back as `NO-CARRIER`, and `virsh reboot` was not enough (`No route to host`). Only `virsh destroy` then `virsh start` restored SSH. With the guest stopped first, `virsh start` failed with `network 'default' is not active`. |
+| Fault D: full host disk | ✅ reproduced | Filling the host to 99% made `virsh snapshot-create-as` fail with `Error while writing VM state: Input/output error`. A write inside the guest then left it `paused (I/O error)` at 100%, and the thin-provisioned `vm1.qcow2` had grown to about 3 GB. Deleting the filler was not enough: the guest stayed paused until `virsh resume`. My first `du` on a glob failed because the shell expanded it without root. |
+| Incident write-up | ✅ done | [incidents/06-kvm.md](incidents/06-kvm.md): all four faults with the first clue for each, where my results differed from the lab guide, a symptom-to-first-command table, my mistakes, and interview questions. |
+| Customer reply | ⬜ next | A plain-language reply to the "customer" for one of the four faults. |
+| LXD exercise | ⬜ planned | Short container exercise to compare with a full VM. |
 
 ---
 
@@ -116,6 +125,8 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 - [Firewalls on EC2: security groups and `ufw`](notes/firewalls.md)
 - [Linux bridge and bond with network namespaces](notes/bond-bridge.md) (commands, lab log, troubleshooting table, interview Q&A)
 - [KVM, QEMU and libvirt: concepts and the nested-virtualization host](notes/kvm-host.md)
+- [KVM first guest: cloud image, cloud-init, libvirt network, snapshots](notes/kvm-first-guest.md) (commands, measurements, problems and fixes, interview Q&A)
+- [KVM guest failures: four faults, troubleshooting table and mistakes](incidents/06-kvm.md)
 - [Gate 1 checkpoint results](notes/gate1.md)
 - [Gate 2 checkpoint results](notes/gate2.md)
 
