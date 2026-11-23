@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 23 Nov 2026 (through Day 15: Week 2 review and Gate 2).*
+*Last updated: 23 Nov 2026 (through Day 16: KVM host built).*
 
 ---
 
@@ -22,6 +22,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 
 - **Cloud lab:** AWS EC2, Ubuntu Server LTS (26.04), region ap-south-1 (Mumbai). I take an AMI before each "break it" lab and restore afterwards.
 - **Local lab:** a local VM on my Mac, where a lab needs console access or extra network cards.
+- **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. I stop it when I'm not using it.
 - **Network labs (bridge, bond, MTU):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
 - All faults are created on throwaway lab machines. No real customer data is used.
@@ -52,7 +53,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 3 | TLS faults | Expired certificate, hostname mismatch, incomplete chain, self-signed certificate | ✅ | [incidents/03-tls.md](incidents/03-tls.md) |
 | 4 | Resource exhaustion | CPU load, memory/OOM kill, full disk, deleted-but-open files, inode exhaustion | ✅ | [incidents/04-resource-exhaustion.md](incidents/04-resource-exhaustion.md) |
 | 5 | Network faults | Bridge missing a port, bond with a dead member, MTU mismatch, firewall dropping ICMP "fragmentation needed", all reproduced in namespaces | ✅ | [incidents/05-bond-bridge-mtu.md](incidents/05-bond-bridge-mtu.md) · [notes/bond-bridge.md](notes/bond-bridge.md) |
-| 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | ⬜ | `incidents/06-…md` |
+| 6 | Virtualization (KVM/libvirt) | Guest will not start, no guest network, full storage pool | 🟡 | `incidents/06-…md` |
 | 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
 
 Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md).
@@ -73,7 +74,7 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | Full disk | ✅ reproduced | A 2 GB file took root from 41% to 72%. `du` without `-a` listed only directories and hid the file, but `/var` (2.6G) was far larger than its subfolders combined (about 550M), which pointed to a file sitting directly in it. `du -xah` and `find -size +500M` named `/var/big`. |
 | Deleted but still held open | ✅ reproduced | After `rm`, `df` stayed at 3.2G used while `du` showed only 48K for the folder. `lsof +L1` found the holder (`sleep`, PID 4820, `(deleted)`). Killing it freed the space. Also learned that `/tmp` here is tmpfs (RAM, 455M), and that a `tail -f &` holder can race with `rm` or exit on its own. |
 | Inode exhaustion | ✅ reproduced | A loop-mounted filesystem with 2000 inodes failed at file 1989 with "No space left on device" while `df -h` showed 89M free. `df -i` showed 100%. Root baseline for comparison: 16% of 878,080 inodes. |
-| KB article 1 | ⬜ next | A public-style article for the "No space left on device" lab. |
+| KB article 1 | ✅ done | [kb/no-space-left-on-device.md](kb/no-space-left-on-device.md): "No space left on device" while `df -h` shows free space. Covers four causes (inodes exhausted, deleted-but-open files, the wrong filesystem such as RAM-backed `tmpfs`, and a large file filling the disk), the commands that tell them apart, and how to verify the fix. |
 
 ### Lab 5 progress: network faults
 
@@ -85,20 +86,14 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | Firewall drops ICMP type 3 code 4 | ✅ reproduced | Same "small works, big hangs" symptom, but `tcpdump` showed the router's `need to frag (mtu 1400)` message arriving while the firewall's DROP counter rose (6 packets, 3456 bytes). Removing the rule restored Path MTU Discovery. Never block all ICMP. |
 | Incident write-up | ✅ done | One report covering the four faults and how each looked different. |
 
----
+### Lab 6 progress: virtualization (KVM/libvirt)
 
-## Day 15: review and Gate 2 (cold, no notes)
-
-Rebuilt the Week 2 labs from memory on `lab1` and timed each part. Full write-up: [notes/gate2.md](notes/gate2.md).
-
-| Part | Time | Result |
+| Part | Status | What I found |
 |---|---|---|
-| HTTPS nginx from scratch (own certificate with a subjectAltName, `nginx -t`, `curl --cacert`) | 10 min | Pass. The same `curl` without `--cacert` failed with error 60, as expected. Found and fixed a duplicate `server_name` warning. |
-| Bridge and bond, then a failover test | 20 min | Pass. 30 of 30 packets received while the active member was taken down; the active slave switched. Cleanup left `ens5` unchanged. |
-| MTU explained aloud | 2 min | Done. Points to tighten: units are bytes, the failure needs the Don't Fragment bit, and the lost message is ICMP type 3 code 4. |
-| Fix a full disk | 8 min | Pass. Found a hidden 3 GB file with `find -size +500M` (root 85% back to 40%) and also practised the deleted-but-open case with `lsof +L1`. |
-
-Notes on the Gate 2 bond build: this time both bond cables attached to the same bridge as the other namespaces (with `miimon 10`), rather than the separate-namespace design in [notes/bond-bridge.md](notes/bond-bridge.md). The members were already down when joined, so the "members must be down first" rule was not tested.
+| KVM host on EC2 | ✅ built | A normal EC2 instance is already a VM and hides the CPU's virtualization extensions, so I launched `kvm-host` (`m7i-flex.large`, 2 vCPU) with nested virtualization enabled. `egrep -c '(vmx\|svm)' /proc/cpuinfo` printed 4 on 2 vCPUs because Intel lists both a `flags` and a `vmx flags` line per CPU. `grep -c '^flags.*vmx'` gave 2, equal to `nproc`, and `kvm-ok` confirmed acceleration. |
+| Install the stack | ✅ fixed | `qemu-kvm` is a virtual package on 26.04, so apt aborted the whole install, and `usermod` then failed because the `libvirt` group did not exist yet. Installing `qemu-system-x86` fixed both. Write-up: [kb/qemu-kvm-no-installation-candidate-ubuntu-26-04.md](kb/qemu-kvm-no-installation-candidate-ubuntu-26-04.md). |
+| Verify | ✅ passed | `virsh list --all` ran cleanly, `/dev/kvm` exists (group `kvm`), `libvirtd` is active, and the `default` network is active with autostart. The checks are scripted in [scripts/verify-kvm-host.sh](scripts/verify-kvm-host.sh). |
+| First guest VM | ⬜ next | Ubuntu cloud image, qcow2 overlay disk, cloud-init seed, `virt-install --import`. |
 
 ---
 
@@ -108,6 +103,7 @@ Notes on the Gate 2 bond build: this time both bond cables attached to the same 
 |---|---|
 | `scripts/failed_ssh.sh` | Reads an SSH auth log and lists the IP addresses with the most failed password attempts. Tested on a sample log file. |
 | `scripts/hello.sh` and `scripts/hello.service` | A small demo service I use to practise systemd faults. |
+| `scripts/verify-kvm-host.sh` | Checks that a host can run KVM guests: CPU flag, `/dev/kvm`, `kvm-ok`, `libvirt` group membership, `virsh`, and the `default` network. Prints PASS or FAIL for each check. |
 
 ---
 
@@ -119,6 +115,7 @@ Notes on the Gate 2 bond build: this time both bond cables attached to the same 
 - [TLS basics](notes/tls.md)
 - [Firewalls on EC2: security groups and `ufw`](notes/firewalls.md)
 - [Linux bridge and bond with network namespaces](notes/bond-bridge.md) (commands, lab log, troubleshooting table, interview Q&A)
+- [KVM, QEMU and libvirt: concepts and the nested-virtualization host](notes/kvm-host.md)
 - [Gate 1 checkpoint results](notes/gate1.md)
 - [Gate 2 checkpoint results](notes/gate2.md)
 
