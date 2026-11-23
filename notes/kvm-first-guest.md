@@ -2,7 +2,7 @@
 
 *Day 17 · 23 Nov 2026 · host: `kvm-host` (EC2 `m7i-flex.large`, Ubuntu 26.04, nested virtualization) · guest: Ubuntu 24.04.5 (noble cloud image)*
 
-Follows [kvm-host.md](kvm-host.md), which covers the host build. This note covers building a guest, how it gets its network and SSH key, and what went wrong on the way.
+Follows [kvm-host.md](kvm-host.md), which covers the host build. This note covers building a guest, how it gets its network and SSH key, and what went wrong on the way. Day 18 breaks this guest on purpose: see [incidents/06-kvm.md](../incidents/06-kvm.md).
 
 ---
 
@@ -105,6 +105,7 @@ virsh snapshot-revert vm1 clean
 | Storage pool | `images`, active, autostart yes |
 | Memory | 1024 MiB works; `virt-install` warns that 3072 MiB is recommended for Ubuntu 24.04 |
 | Guest hostname | `ubuntu` (the cloud image default) |
+| Disk file owner while the guest is shut off (Day 18) | `vm1.qcow2` was `root:root` 644; while the guest was running it showed `libvirt-qemu kvm` with a `+` (ACL) |
 
 ---
 
@@ -154,6 +155,7 @@ Each new guest has its own SSH host key, and addresses can be reused. If a new g
 - The first SSH after the revert failed with `No route to host`. About 15 seconds later `ping` showed 0% loss, SSH worked, and `cat /etc/hostname` printed `ubuntu`.
 - I did not confirm why the route was missing for a few seconds. A likely cause is the guest's network device being recreated. Next time I will check `ip neigh` on the host while it happens.
 - **Gap in my test:** I ran the `rm` but did not show the file missing before the revert. Next time: `ssh ... "cat /etc/hostname"` between the `rm` and the revert, so the output proves the break and the repair.
+- **Day 18 follow-up:** taking a snapshot of a *running* guest also needs free space on the host, because the guest's state is written into the same disk file. With the host at 99% full, `virsh snapshot-create-as vm1 s2` failed with `Error while writing VM state: Input/output error`, and no `s2` snapshot was left behind (`virsh snapshot-list` still showed only `clean`).
 
 ---
 
@@ -192,4 +194,4 @@ It rolls the guest back to a known state quickly. It is not a backup: an interna
 
 - Reach the guest from my Mac in one command: `ssh -J ubuntu@<kvm-host-ip> ubuntu@<guest-ip>`. This needs my Mac's public key as a second line under `ssh_authorized_keys` in `user-data`.
 - Before stopping `kvm-host`, shut the guest down cleanly: `virsh shutdown vm1`. The guest definition persists, but autostart is disabled, so start it again with `virsh start vm1`.
-- Day 18 (Lab 6) uses `vm1` for the fault exercises: guest will not start, no guest network, full storage pool.
+- Day 18 (Lab 6) used `vm1` for the fault exercises. Done: missing disk, permission denied and wrong path, no guest network, full host disk. See [incidents/06-kvm.md](../incidents/06-kvm.md).
