@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 24 Nov 2026 (through Day 19: KVM fault lab, customer replies and LXD comparison done).*
+*Last updated: 24 Nov 2026 (through Day 21: LVM, the NFS baseline and the four NFS fault drills done and written up).*
 
 ---
 
@@ -24,6 +24,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 - **Local lab:** a local VM on my Mac, where a lab needs console access or extra network cards.
 - **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. Guests are built from the Ubuntu 24.04 cloud image and sit on libvirt's NAT network (`virbr0`, 192.168.122.0/24), so I reach them from `kvm-host`, not from my Mac. I stop `kvm-host` when I'm not using it.
 - **Network labs (bridge, bond, MTU):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
+- **Storage labs (LVM, NFS):** LVM on two extra 2 GiB EBS volumes attached to `lab1` (matched to the console by volume serial before any wipe). NFS on two t3.micro instances (`nfs-server`, `nfs-client`) in a security group that allows 2049 and 111 only from its own members; NFS traffic uses private IPs. I deleted the LVM volumes after the lab. The NFS pair is kept only while I'm practising and is stopped when I'm not using it.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
 - All faults are created on throwaway lab machines. No real customer data is used.
 
@@ -54,7 +55,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 4 | Resource exhaustion | CPU load, memory/OOM kill, full disk, deleted-but-open files, inode exhaustion | ✅ | [incidents/04-resource-exhaustion.md](incidents/04-resource-exhaustion.md) |
 | 5 | Network faults | Bridge missing a port, bond with a dead member, MTU mismatch, firewall dropping ICMP "fragmentation needed", all reproduced in namespaces | ✅ | [incidents/05-bond-bridge-mtu.md](incidents/05-bond-bridge-mtu.md) · [notes/bond-bridge.md](notes/bond-bridge.md) |
 | 6 | Virtualization (KVM/libvirt) | Guest will not start (missing disk, permission denied, disk in an unreachable path), guest running but no network, full host disk pausing the guest, LXD container compared with a KVM guest | ✅ | [incidents/06-kvm.md](incidents/06-kvm.md) · [notes/kvm-first-guest.md](notes/kvm-first-guest.md) · [notes/virtualization-comparison.md](notes/virtualization-comparison.md) |
-| 7 | Storage (LVM and NFS) | Permission denied, firewall on 2049, stale file handle, hung mount | ⬜ | `incidents/07-…md` |
+| 7 | Storage (LVM and NFS) | LVM grown online; NFS baseline built; permission denied (root_squash and UID mismatch), firewall on 2049 (security group and `ufw`), stale file handle, hung hard mount | ✅ | [incidents/07-nfs.md](incidents/07-nfs.md) · [notes/storage-lvm-nfs.md](notes/storage-lvm-nfs.md) · [notes/nfs-faults.md](notes/nfs-faults.md) · [kb/nfs-mount-hangs-server-down.md](kb/nfs-mount-hangs-server-down.md) |
 
 Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md).
 
@@ -104,6 +105,20 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | Customer replies | ✅ done | Plain-language replies for two faults (host disk full, guest network down) in [incidents/06-kvm.md](incidents/06-kvm.md), each with what I confirmed, what I don't know yet, what I did, and when I will update the customer. The network reply says plainly that a forced restart can lose unsaved in-memory work. |
 | LXD vs KVM | ✅ done | LXD 6.10.1 gave an Ubuntu 24.04 container an IP address in 12.2 s (`dir` storage pool, one run), against 20.6 s cold and 17.1 s warm for the KVM guest to answer SSH. The container reported the host's kernel (`7.0.0-1018-aws`) while the guest runs `6.8.0-147-generic`. One `sleep` was PID 6588 on the host and 658 inside the container. `limits.memory 256MiB` showed as 256 in `free -m`. The LXD snapshot was filesystem only (`STATEFUL: NO`), and restoring it brought a deleted file back. Details and limits: [notes/virtualization-comparison.md](notes/virtualization-comparison.md). |
 
+### Lab 7 progress: storage (LVM and NFS)
+
+| Part | Status | What I found |
+|---|---|---|
+| LVM: build and grow online | ✅ done | Two 2 GiB gp3 volumes appeared as `nvme1n1` and `nvme2n1`, not the names in the lab guide, so I matched `lsblk -o NAME,SIZE,SERIAL` to the console volume IDs before touching anything. One disk carried an old empty ext4 partition (only `lost+found`, checked read-only); I cleared it with `wipefs`. Built `vg0` from one disk, a 1 GiB LV (`df` showed 974M), then `vgextend` and `lvextend -r -L +1G` while mounted: `df` showed 2.0G and the test file survived. The LV used the whole first disk plus a sliver of the second. I did not test growing without `-r`. Notes: [notes/storage-lvm-nfs.md](notes/storage-lvm-nfs.md). |
+| NFS baseline | ✅ done | Server exported `/srv/share` to the client's private IP. The mount came up as `nfs4`, `vers=4.2`, `hard`, `sec=sys`. Files written on either side showed on the other with UID 1000 on both machines. As root on the client, `touch` created a file owned by 65534 (`nobody`): root_squash. The client's `ls -l` showed a `+` (ACL) the server did not; on Day 21 every file and the directory showed it, and I still did not run `getfacl`. |
+| `showmount` hang | ✅ found | `showmount -e` from the client hung while the mount worked and `nc` to port 2049 succeeded. Likely cause: `showmount` talks to `mountd` on a port my security group does not allow (not verified; `rpcinfo -p` would confirm). NFSv4 itself needs only 2049. |
+| Fault (a): permission denied | ✅ reproduced | With the server directory `root:root` 755, a write as `ubuntu` (UID 1000) failed, and so did `sudo`, because root_squash turns remote root into `nobody`. `ls -lnd` showed owner `0 0`. `chown 1000:1000` fixed it for `ubuntu` while `sudo touch` still failed (correct); `chmod 777` also worked but is lab-only. A file created by a server-only user with UID 2001 showed as a bare `2001` on the client, and `ubuntu` could not append to it (mode 644). No remount was needed after any fix. |
+| Fault (b): firewall on 2049 | ✅ reproduced | With the security group rule removed, `nc -zv -w 5` printed `timed out: Operation now in progress` and the mount hung; restoring the rule gave `succeeded!`. Enabling `ufw` on the server (SSH allowed first) gave the identical symptom while the security group was fine, so there were two firewall layers; allowing 2049 from the client IP fixed it. I did not reproduce "connection refused", and I did not paste `ufw status` after the fix. |
+| Fault (c): stale file handle | ✅ reproduced | Deleting and recreating `/srv/share` while a client sat inside it made `ls` fail with errno 116 (`Stale file handle`) while `mount \| grep nfs` still looked healthy and `dmesg` showed nothing. `umount` first said `device is busy` (`fuser -vm` named my `tail`). I then mounted over the busy mount by mistake, which stacked a second mount on top; `umount -l` removed the top one and `findmnt` later showed a single mount. I never checked what was underneath. |
+| Fault (d): hung hard mount | ✅ reproduced | After stopping the server, `ls` froze in state `D` (`1653 D+`). Ctrl+C freed the command, so it was killable, but the mount stayed and the next access hung again. `dmesg` printed `not responding, timed out` (not "still trying") only after a second `ls` and a wait; no recovery line appeared after the server returned, and the mount worked again with no remount. `umount -f` said `device is busy` until I released the frozen `ls`, then succeeded; `umount -l` was not needed. I did not test data loss, and I did not capture what the frozen `ls` did when the server returned. |
+| Incident write-up and customer replies | ✅ done | [incidents/07-nfs.md](incidents/07-nfs.md): four faults, the first command for each symptom, where my results differed from my expectations, my mistakes, and two customer replies (frozen folder, mount timeout), each with what I confirmed, what I don't know yet, what I did, and when I will update. |
+| KB article 2 | ✅ done | [kb/nfs-mount-hangs-server-down.md](kb/nfs-mount-hangs-server-down.md): NFS mount hangs when the server stops or reboots. Symptoms, cause, diagnosis commands, an escalation order (restore the server, release the holder, `umount -f`, `umount -l`), the data-loss warning, and how to verify. |
+
 ---
 
 ## Scripts
@@ -128,6 +143,9 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 - [KVM first guest: cloud image, cloud-init, libvirt network, snapshots](notes/kvm-first-guest.md) (commands, measurements, problems and fixes, interview Q&A)
 - [KVM guest failures: four faults, troubleshooting table and mistakes](incidents/06-kvm.md)
 - [LXD vs Docker vs KVM: measured comparison](notes/virtualization-comparison.md)
+- [Storage: LVM and NFS baseline](notes/storage-lvm-nfs.md) (commands, measurements, the `showmount` hang, root_squash)
+- [NFS fault drills: permissions, firewall, stale handle, hung mount](notes/nfs-faults.md) (commands, measurements, escalation order, mistakes, interview Q&A)
+- [NFS failures: four faults, symptom-to-command table and customer replies](incidents/07-nfs.md)
 - [Gate 1 checkpoint results](notes/gate1.md)
 - [Gate 2 checkpoint results](notes/gate2.md)
 
