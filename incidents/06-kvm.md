@@ -240,11 +240,25 @@ ssh ubuntu@192.168.122.212 "rm -f ~/big; hostname; df -h /"
 
 ---
 
-## Customer reply (Fault D): draft
+## Customer replies
 
-> Hi Sam, thanks for letting us know, and I'm sorry. A frozen server and a failed snapshot at a critical moment is stressful. What I've confirmed: your server's data is intact, but the disk on the physical machine it runs on had filled up, so the server paused itself rather than risk corrupting anything. I've freed space and resumed it, and it's running normally again. I don't yet know what filled the disk. I'll investigate that next and send you what I find by end of day tomorrow. To prevent a repeat, I recommend an alert when that disk passes 80%, and I can help set that up.
+### Fault D: host disk full
 
-TODO: rewrite this in my own words, and add a second reply for another fault (the network one is a good choice).
+> Hi Sam, thanks for letting us know, and I'm sorry about the disruption. I know a frozen server is stressful, especially when you were trying to protect it with a snapshot.
+>
+> Here is what I found. The physical machine your server runs on had run out of disk space, so your server paused itself rather than risk damaging its data. Your data is intact. I have freed space and resumed the server, and it is running normally again. The snapshot you tried to take did not complete, and nothing half-finished was left behind. Taking a snapshot of a running server also needs space for its memory, so it needs more free space than you might expect.
+>
+> What I don't know yet is what filled the disk. I'm looking into that now and will send you what I find by the end of tomorrow. To stop this happening again, I recommend an alert when that disk passes 80% full, and I'm happy to help set it up. Once there is plenty of free space, please try the snapshot again.
+
+### Fault C: guest network down
+
+> Hi Sam, thanks for flagging this, and I'm sorry. I understand it's frustrating when your server shows as running but you can't reach it.
+>
+> Here is what I found. The server itself was healthy, but the virtual network it connects through had stopped, so nothing could get in or out. I restarted that network. The server was still not reachable afterwards, so I also restarted the server itself. That was a forced restart, so anything it was holding only in memory and had not saved to disk would have been lost. The server is reachable again and I have confirmed I can log in.
+>
+> What I don't know yet is what stopped the network. I'll look into that and send you what I find by the end of tomorrow. Meanwhile, if you notice any missing work from before the restart, tell me and I'll check it with you.
+
+TODO: reread both and change any phrase that is not how I would say it. The facts in them come from the Fault C and Fault D notes above.
 
 ---
 
