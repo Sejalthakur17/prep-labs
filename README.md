@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 24 Nov 2026 (through Day 21: LVM, the NFS baseline and the four NFS fault drills done and written up).*
+*Last updated: 25 Nov 2026 (through Day 22: Gate 3 review done, with LV, NFS faults and a fresh KVM guest under time).*
 
 ---
 
@@ -24,7 +24,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 - **Local lab:** a local VM on my Mac, where a lab needs console access or extra network cards.
 - **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. Guests are built from the Ubuntu 24.04 cloud image and sit on libvirt's NAT network (`virbr0`, 192.168.122.0/24), so I reach them from `kvm-host`, not from my Mac. I stop `kvm-host` when I'm not using it.
 - **Network labs (bridge, bond, MTU):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
-- **Storage labs (LVM, NFS):** LVM on two extra 2 GiB EBS volumes attached to `lab1` (matched to the console by volume serial before any wipe). NFS on two t3.micro instances (`nfs-server`, `nfs-client`) in a security group that allows 2049 and 111 only from its own members; NFS traffic uses private IPs. I deleted the LVM volumes after the lab. The NFS pair is kept only while I'm practising and is stopped when I'm not using it.
+- **Storage labs (LVM, NFS):** LVM on two extra 2 GiB EBS volumes attached to `lab1` (matched to the console by volume serial before any wipe). NFS on two t3.micro instances (`nfs-server`, `nfs-client`) in a security group that allows 2049 and 111 only from its own members; NFS traffic uses private IPs. I deleted the LVM volumes after the lab. I delete the NFS pair after its labs and rebuild it (about 10 minutes) when a lab needs it.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
 - All faults are created on throwaway lab machines. No real customer data is used.
 
@@ -148,6 +148,7 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 - [NFS failures: four faults, symptom-to-command table and customer replies](incidents/07-nfs.md)
 - [Gate 1 checkpoint results](notes/gate1.md)
 - [Gate 2 checkpoint results](notes/gate2.md)
+- [Gate 3 checkpoint results: LVM, NFS faults and a fresh KVM guest under time](notes/gate3.md)
 
 ---
 
