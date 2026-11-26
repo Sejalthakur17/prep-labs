@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 26 Nov 2026 (through Day 23: Ubuntu lifecycle and security updates on `lab1`).*
+*Last updated: 26 Nov 2026 (through Day 24: scripting for support on `lab1`).*
 
 ---
 
@@ -57,7 +57,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 6 | Virtualization (KVM/libvirt) | Guest will not start (missing disk, permission denied, disk in an unreachable path), guest running but no network, full host disk pausing the guest, LXD container compared with a KVM guest | ✅ | [incidents/06-kvm.md](incidents/06-kvm.md) · [notes/kvm-first-guest.md](notes/kvm-first-guest.md) · [notes/virtualization-comparison.md](notes/virtualization-comparison.md) |
 | 7 | Storage (LVM and NFS) | LVM grown online; NFS baseline built; permission denied (root_squash and UID mismatch), firewall on 2049 (security group and `ufw`), stale file handle, hung hard mount | ✅ | [incidents/07-nfs.md](incidents/07-nfs.md) · [notes/storage-lvm-nfs.md](notes/storage-lvm-nfs.md) · [notes/nfs-faults.md](notes/nfs-faults.md) · [kb/nfs-mount-hangs-server-down.md](kb/nfs-mount-hangs-server-down.md) |
 
-Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md). Ubuntu lifecycle and security updates (Day 23), written up in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md).
+Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md). Ubuntu lifecycle and security updates (Day 23), written up in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md). Scripting for support (Day 24), written up in [notes/scripting.md](notes/scripting.md) and [notes/script-reading.md](notes/script-reading.md).
 
 ### Lab 3 progress: TLS
 
@@ -130,6 +130,20 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | After the upgrade | ✅ done | `needrestart` restarted `polkit` and deferred `dbus`, `networkd-dispatcher` and `unattended-upgrades`, and reported the running kernel as up to date. A restart of `dbus` can disrupt the system, so it waits for a reboot. |
 | 24.04 vs 26.04 | ✅ done | Compared support dates, kernel, OpenSSL, glibc and the security-status command in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md). The 26.04 values come from my own outputs. The libpcap versions for both releases are confirmed from USN-9203-1. The other 24.04 values are from general knowledge and still need checking on a 24.04 machine. |
 
+### Scripting for support (Day 24)
+
+| Part | Status | What I found |
+|---|---|---|
+| `healthcheck.sh` | ✅ built | Built in four layers, running it after each: the eight manual checks, a header and swap note with a root-aware ports block, a `check_disk` function with a `WARN_DISK` threshold and a `problems` counter, then a failed-unit count, `--help` and a final `RESULT` line with exit code 0 or 1. Baseline on `lab1`: load near 0, about 590Mi of 908Mi memory available, no swap, root disk 42%, inodes 16%, 0 failed units. One run showed load 1.07 / 0.40 / 0.15 and the next 0.22 / 0.29 / 0.13: a short burst, and `packagekitd` had just started, but I did not check the journal for that minute. |
+| Tests | ✅ done | `bash -n` clean. `--help` exited 0. A normal run printed `all checks passed` with exit 0. `WARN_DISK=10` forced the warning and exit 1, and the script carried on to the next section. A throwaway unit made with `systemd-run --unit=failtest2 /bin/false` appeared as `failed` and raised the counter; after `systemctl reset-failed` the script passed again. I did not run the typo (`uptimee`) and unset-variable (`$NOPE`) tests. |
+| Stopped is not failed | ✅ found | With nginx stopped, `systemctl --failed` listed nothing and the first version printed `all checks passed` while the site was down. A unit stopped on purpose is `inactive`, not `failed`. Added `EXPECT_PORTS` and `check_port()`: with `EXPECT_PORTS="22 80 443"` and nginx stopped it warned on 80 and 443, printed `2 problem(s) found` and exited 1, and passed again after `systemctl start nginx`. |
+| Ports and root | ✅ done | Read with `sudo`: 22 is `sshd` (and `systemd` holds the socket too), 80 and 443 are `nginx` (one master and its workers share the socket), 53 is `systemd-resolve`, UDP 68 is `systemd-network`, UDP 323 is `chronyd`. Only 22, 80 and 443 listen outside loopback. Without root the `Process` column is empty, so the script says so. |
+| Old errors that looked current | ✅ checked | `journalctl -p err -n 20` showed `networkctl: Interface "br0" not found` (and `v1-br`, `v2-br`, `b2-br`) from 22 Nov. `journalctl -b -p err` showed only the harmless `piix4_smbus` line, `sudo grep -rIl` over `/etc` found nothing, and `ip -br link` showed only `lo` and `ens5`, so the errors are history, most likely from the Lab 5 bridge work. I did not trace which unit called `networkctl`. Lesson: scope logs with `-b` first. |
+| `log_summary.py` | ✅ built | Counts ERROR, WARN, INFO and OTHER per file, with exit codes 1 (usage), 2 (not found), 3 (permission) and 4 (directory). A five-line test file gave 2, 1, 1, 1. On the boot journal (1371 lines) it counted ERROR 22, WARN 3, INFO 70, OTHER 1276. I did not test the permission-denied path. Running it from the wrong folder gave Python's own `can't open file` error, which also exits 2, so the message matters as much as the code. |
+| Text match vs priority filter | ✅ found | `journalctl -b -p err` showed 1 line while the text match counted 22. The 22 were mostly noise (`RAS: Correctable Errors collector`, `regulatory.db ... error -2`, `apport` descriptions), but the SSM agent's `ERROR` lines were not in the `-p err` output either. The likely reason is that the agent does not set a journal priority (not verified). Use both views and read the matching lines before trusting a count. |
+| SSM agent finding | 🟡 to confirm | The agent logged `no EC2 IMDS role found` (HTTP 404) and an `AccessDeniedException`, which points to no IAM instance profile on `lab1`, so Systems Manager would not work as a recovery path here. I have not run the metadata check to confirm. |
+| Script reading | ✅ done | Read `/etc/cron.daily/logrotate` line by line in [notes/script-reading.md](notes/script-reading.md): it exits early on systemd machines (a timer does the work), exits quietly if `logrotate` is removed, saves `$?` immediately, logs an `ALERT` with `logger` on failure and passes the exit code on. I did not run the `systemctl list-timers` check on `lab1`. |
+
 ---
 
 ## Scripts
@@ -139,6 +153,8 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | `scripts/failed_ssh.sh` | Reads an SSH auth log and lists the IP addresses with the most failed password attempts. Tested on a sample log file. |
 | `scripts/hello.sh` and `scripts/hello.service` | A small demo service I use to practise systemd faults. |
 | `scripts/verify-kvm-host.sh` | Checks that a host can run KVM guests: CPU flag, `/dev/kvm`, `kvm-ok`, `libvirt` group membership, `virsh`, and the `default` network. Prints PASS or FAIL for each check. |
+| `scripts/healthcheck.sh` | First-look health summary: uptime and load, memory and swap, disk and inode use, failed units, expected ports, top CPU processes, errors from this boot, listening ports (with process names when run as root). Settings `WARN_DISK` (default 80) and `EXPECT_PORTS` (default `22`). Exits 0 when all checks pass, 1 when any fail. Tested with a forced disk warning, a deliberately failed unit and a stopped nginx. |
+| `scripts/log_summary.py` | Counts log lines per severity (ERROR, WARN, INFO, OTHER) in a file and prints a sorted table. Exit codes: 1 usage, 2 not found, 3 permission denied, 4 directory. Counts by text match, so it overcounts on the system journal. |
 
 ---
 
@@ -161,6 +177,8 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 - [Gate 2 checkpoint results](notes/gate2.md)
 - [Gate 3 checkpoint results: LVM, NFS faults and a fresh KVM guest under time](notes/gate3.md)
 - [Ubuntu lifecycle and security updates](notes/ubuntu-lifecycle.md) (LTS and Pro support dates, security update vs SRU, two update traces, 24.04 vs 26.04, customer reply template)
+- [Scripting for support](notes/scripting.md) (healthcheck.sh and log_summary.py: layers, tests, exit codes, stopped vs failed, text vs priority filtering, mistakes, interview Q&A)
+- [Reading someone else's script: `/etc/cron.daily/logrotate`](notes/script-reading.md) (three-pass method, line-by-line explanation, failure points)
 
 ---
 
