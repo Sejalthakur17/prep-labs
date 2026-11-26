@@ -53,7 +53,8 @@ Read the pocket in `apt list --upgradable` or on the first line of the changelog
   - CVE-2026-6244: BPF interpreter missing division-by-zero check (crash).
   - CVE-2026-6554: BPF interpreter does not limit backward jumps (hang, remote DoS).
 - **Risk on my VM:** low. Most issues need an attacker who controls a filter program or a remote capture server. Patch anyway.
-- **Before:** `1.10.6-1ubuntu1.1`. **After:** `1.10.6-1ubuntu1.2` (offered by `resolute-security`).
+- **Fixed version (from the USN's Update instructions):** 26.04 `libpcap0.8t64 1.10.6-1ubuntu1.2`, 24.04 `libpcap0.8t64 1.10.4-4.1ubuntu3.2`, 22.04 `libpcap0.8 1.10.1-4ubuntu1.22.04.3`. Note the package name differs on 22.04.
+- **Before:** `1.10.6-1ubuntu1.1`. **After:** `1.10.6-1ubuntu1.2`, which matches the notice (offered by `resolute-security`).
 
 ## 5. Security update trace B: expat 2.7.4-1ubuntu0.3 (resolute-security)
 - Changelog dated 24 Nov 2026. Fixes **10 CVEs**: 93990 and 134703 (UTF-16 surrogate handling), 102633 and 118370 (integer overflows), 77214 and 124317 (out-of-bounds reads), 115506 and 113351 (memory-use DoS), 117610 (NULL pointer dereference), 128241 (xmlwf symlink following).
@@ -71,7 +72,7 @@ ls /var/run/reboot-required     # exists only if a reboot is pending
 Kernel check: `Running kernel seems to be up-to-date.`
 
 ## 7. Customer reply template
-> Hello, security fixes for supported LTS releases are published as USNs. For libpcap the notice is USN-9203-1 (https://ubuntu.com/security/notices/USN-9203-1). On Ubuntu 26.04 the fixed package is `libpcap0.8t64 1.10.6-1ubuntu1.2`. Please run `sudo apt update && sudo apt upgrade`, then restart services that use the library. Confirm with `apt policy libpcap0.8t64` that Installed matches the fixed version. One of the issues, CVE-2025-11961, only affects 22.04 and 24.04, so it does not apply to your release.
+> Hello, security fixes for supported LTS releases are published as USNs. For libpcap the notice is USN-9203-1 (https://ubuntu.com/security/notices/USN-9203-1). On Ubuntu 26.04 the fixed package is `libpcap0.8t64 1.10.6-1ubuntu1.2`. Please run `sudo apt update && sudo apt upgrade`, then restart services that use the library. Confirm with `apt policy libpcap0.8t64` that Installed matches the fixed version. One of the issues, CVE-2025-11961, only affects 22.04 and 24.04, so it does not apply to your release. On 24.04 the fixed version is `1.10.4-4.1ubuntu3.2`, and on 22.04 the package is called `libpcap0.8`.
 
 If the release is out of standard support: Ubuntu Pro (ESM) is how security fixes continue to arrive.
 
@@ -84,10 +85,11 @@ If the release is out of standard support: Ubuntu Pro (ESM) is how security fixe
 | OpenSSL | 3.0.x | **3.5.5** (seen in the openssl changelog) |
 | glibc | 2.39 | **2.43** (seen in `libc-bin 2.43-...`) |
 | Security status command | `ubuntu-security-status` | `pro security-status` (old name redirects) |
+| libpcap (from USN-9203-1) | 1.10.4 (fixed: `libpcap0.8t64 1.10.4-4.1ubuntu3.2`) | 1.10.6 (fixed: `libpcap0.8t64 1.10.6-1ubuntu1.2`) |
 | Package indexes | `amd64` | also `amd64v3` indexes (seen in `apt update`) |
 | Upgrade path | `do-release-upgrade` to 26.04 once the first point release is out | n/a |
 
-Check any row on a machine with: `uname -r`, `openssl version`, `ldd --version | head -1`, `apt policy <pkg>`, `lsb_release -a`.
+The libpcap row is verified from USN-9203-1. The other 24.04 values are from general knowledge: check them on a 24.04 machine with: `uname -r`, `openssl version`, `ldd --version | head -1`, `apt policy <pkg>`, `lsb_release -a`.
 
 ## 9. Commands to remember
 `lsb_release -a` · `pro security-status` · `pro status` · `apt list --upgradable` · `apt policy <pkg>` · `apt changelog <pkg> | sed -n '1,/^ -- /p'` · `sudo apt install --only-upgrade <pkg>` · `apt rdepends --installed <pkg>` · `ls /var/run/reboot-required`
