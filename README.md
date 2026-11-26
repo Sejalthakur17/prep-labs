@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 25 Nov 2026 (through Day 22: Gate 3 review done, with LV, NFS faults and a fresh KVM guest under time).*
+*Last updated: 26 Nov 2026 (through Day 23: Ubuntu lifecycle and security updates on `lab1`).*
 
 ---
 
@@ -22,7 +22,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 
 - **Cloud lab:** AWS EC2, Ubuntu Server LTS (26.04), region ap-south-1 (Mumbai). I take an AMI before each "break it" lab and restore afterwards.
 - **Local lab:** a local VM on my Mac, where a lab needs console access or extra network cards.
-- **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. Guests are built from the Ubuntu 24.04 cloud image and sit on libvirt's NAT network (`virbr0`, 192.168.122.0/24), so I reach them from `kvm-host`, not from my Mac. I stop `kvm-host` when I'm not using it.
+- **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. Guests are built from the Ubuntu 24.04 cloud image and sit on libvirt's NAT network (`virbr0`, 192.168.122.0/24), so I reach them from `kvm-host`, not from my Mac. I deleted `kvm-host` after Gate 3 to save AWS credits and rebuild it if a lab needs it.
 - **Network labs (bridge, bond, MTU):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
 - **Storage labs (LVM, NFS):** LVM on two extra 2 GiB EBS volumes attached to `lab1` (matched to the console by volume serial before any wipe). NFS on two t3.micro instances (`nfs-server`, `nfs-client`) in a security group that allows 2049 and 111 only from its own members; NFS traffic uses private IPs. I deleted the LVM volumes after the lab. I delete the NFS pair after its labs and rebuild it (about 10 minutes) when a lab needs it.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
@@ -57,7 +57,7 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 6 | Virtualization (KVM/libvirt) | Guest will not start (missing disk, permission denied, disk in an unreachable path), guest running but no network, full host disk pausing the guest, LXD container compared with a KVM guest | ✅ | [incidents/06-kvm.md](incidents/06-kvm.md) · [notes/kvm-first-guest.md](notes/kvm-first-guest.md) · [notes/virtualization-comparison.md](notes/virtualization-comparison.md) |
 | 7 | Storage (LVM and NFS) | LVM grown online; NFS baseline built; permission denied (root_squash and UID mismatch), firewall on 2049 (security group and `ufw`), stale file handle, hung hard mount | ✅ | [incidents/07-nfs.md](incidents/07-nfs.md) · [notes/storage-lvm-nfs.md](notes/storage-lvm-nfs.md) · [notes/nfs-faults.md](notes/nfs-faults.md) · [kb/nfs-mount-hangs-server-down.md](kb/nfs-mount-hangs-server-down.md) |
 
-Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md).
+Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md). Ubuntu lifecycle and security updates (Day 23), written up in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md).
 
 ### Lab 3 progress: TLS
 
@@ -119,6 +119,17 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | Incident write-up and customer replies | ✅ done | [incidents/07-nfs.md](incidents/07-nfs.md): four faults, the first command for each symptom, where my results differed from my expectations, my mistakes, and two customer replies (frozen folder, mount timeout), each with what I confirmed, what I don't know yet, what I did, and when I will update. |
 | KB article 2 | ✅ done | [kb/nfs-mount-hangs-server-down.md](kb/nfs-mount-hangs-server-down.md): NFS mount hangs when the server stops or reboots. Symptoms, cause, diagnosis commands, an escalation order (restore the server, release the holder, `umount -f`, `umount -l`), the data-loss warning, and how to verify. |
 
+### Ubuntu lifecycle and security updates (Day 23)
+
+| Part | Status | What I found |
+|---|---|---|
+| Release and support | ✅ done | `lab1` runs Ubuntu 26.04.1 LTS (resolute). `pro security-status` showed 715 packages (708 Main/Restricted, 7 Universe/Multiverse), patched until 2031. The machine is not attached to Ubuntu Pro, which would extend Main/Restricted and Universe/Multiverse coverage to 2036. `ubuntu-security-status` now only redirects to `pro security-status`. |
+| Security update vs SRU | ✅ done | After `sudo apt update`, 30 packages were upgradable. The pocket in `apt list --upgradable` separated the kinds: `resolute-updates,resolute-security` (libexpat1, libpcap0.8t64, krb5 libs, tzdata, `linux-aws`) against `resolute-updates` only (vim, fwupd, snapd). The `fwupd` changelog says "Backport to resolute" with `LP:` bug numbers, which marks an SRU. `vim` received both kinds: `4.9` was `resolute-security` and `4.10` was `resolute`. |
+| Trace: libpcap (USN-9203-1) | ✅ done | The notice lists 7 CVEs: four in the BPF filter interpreter, two in the remote-capture (rpcap) feature, and CVE-2025-11961, which affects only 22.04 and 24.04, so it does not apply to 26.04. On my VM only `tcpdump` depends on `libpcap0.8t64`. `apt policy` went from `1.10.6-1ubuntu1.1` to `1.10.6-1ubuntu1.2`. I did not read the notice's "Update instructions" section, so the fixed version is the one `apt` offered from `resolute-security`. |
+| Trace: expat | ✅ done | `2.7.4-1ubuntu0.3` (`resolute-security`) fixes 10 CVEs (UTF-16 handling, integer overflows, out-of-bounds reads, memory-use denial of service, a NULL dereference, an `xmlwf` symlink issue). Ubuntu keeps upstream 2.7.4 and backports the fixes, so the upstream version number does not show whether a machine is exposed. I did not look up the USN number for expat. |
+| After the upgrade | ✅ done | `needrestart` restarted `polkit` and deferred `dbus`, `networkd-dispatcher` and `unattended-upgrades`, and reported the running kernel as up to date. A restart of `dbus` can disrupt the system, so it waits for a reboot. |
+| 24.04 vs 26.04 | ✅ done | Compared support dates, kernel, OpenSSL, glibc and the security-status command in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md). The 26.04 values come from my own outputs. The 24.04 values are from general knowledge and still need checking on a 24.04 machine. |
+
 ---
 
 ## Scripts
@@ -149,6 +160,7 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 - [Gate 1 checkpoint results](notes/gate1.md)
 - [Gate 2 checkpoint results](notes/gate2.md)
 - [Gate 3 checkpoint results: LVM, NFS faults and a fresh KVM guest under time](notes/gate3.md)
+- [Ubuntu lifecycle and security updates](notes/ubuntu-lifecycle.md) (LTS and Pro support dates, security update vs SRU, two update traces, 24.04 vs 26.04, customer reply template)
 
 ---
 
