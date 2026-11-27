@@ -4,7 +4,7 @@ Hands-on labs where I **reproduce a fault, diagnose it from logs and tools, fix 
 
 I'm building this to practise Linux and cloud support work on Ubuntu: troubleshooting, ownership of a problem from first report to fix, and clear written communication. It is a work in progress, and the table below shows what is done and what is still planned.
 
-*Last updated: 26 Nov 2026 (through Day 24: scripting for support on `lab1`).*
+*Last updated: 27 Nov 2026 (through Day 26: capstone ticket 1 on `lab1`).*
 
 ---
 
@@ -25,6 +25,7 @@ Each incident report records the commands I ran, what I saw, what I concluded, t
 - **KVM lab:** a separate EC2 instance (`kvm-host`, `m7i-flex.large`) with nested virtualization enabled, because KVM needs the CPU's virtualization extensions and a normal EC2 instance hides them. Guests are built from the Ubuntu 24.04 cloud image and sit on libvirt's NAT network (`virbr0`, 192.168.122.0/24), so I reach them from `kvm-host`, not from my Mac. I deleted `kvm-host` after Gate 3 to save AWS credits and rebuild it if a lab needs it.
 - **Network labs (bridge, bond, MTU):** built with Linux network namespaces and veth pairs on the same EC2 instance, so nothing touches the SSH interface (`ens5`). I record `ip -br addr` before and after each lab to prove the real connection was unchanged.
 - **Storage labs (LVM, NFS):** LVM on two extra 2 GiB EBS volumes attached to `lab1` (matched to the console by volume serial before any wipe). NFS on two t3.micro instances (`nfs-server`, `nfs-client`) in a security group that allows 2049 and 111 only from its own members; NFS traffic uses private IPs. I deleted the LVM volumes after the lab. I delete the NFS pair after its labs and rebuild it (about 10 minutes) when a lab needs it.
+- **Container lab (Docker):** `docker.io` 29.1.3 from Ubuntu's own repository, installed on `lab1` (a t3.micro with about 900 MiB of RAM). Images: `ubuntu:24.04`, `ubuntu:26.04` and `nginx`. All faults are single containers, with no Compose and no custom image builds.
 - **Client:** macOS terminal over SSH; Wireshark for reading packet captures.
 - All faults are created on throwaway lab machines. No real customer data is used.
 
@@ -38,6 +39,7 @@ prep-labs/
   notes/        # my study notes and cheat sheets
   incidents/    # one write-up per lab: symptom, diagnosis, root cause, fix
   kb/           # public-style knowledge base articles
+  replies/      # plain-language customer replies for capstone tickets
   scripts/      # bash and Python helpers
 ```
 
@@ -56,8 +58,9 @@ Status key: ✅ done and written up · 🟡 in progress · ⬜ planned
 | 5 | Network faults | Bridge missing a port, bond with a dead member, MTU mismatch, firewall dropping ICMP "fragmentation needed", all reproduced in namespaces | ✅ | [incidents/05-bond-bridge-mtu.md](incidents/05-bond-bridge-mtu.md) · [notes/bond-bridge.md](notes/bond-bridge.md) |
 | 6 | Virtualization (KVM/libvirt) | Guest will not start (missing disk, permission denied, disk in an unreachable path), guest running but no network, full host disk pausing the guest, LXD container compared with a KVM guest | ✅ | [incidents/06-kvm.md](incidents/06-kvm.md) · [notes/kvm-first-guest.md](notes/kvm-first-guest.md) · [notes/virtualization-comparison.md](notes/virtualization-comparison.md) |
 | 7 | Storage (LVM and NFS) | LVM grown online; NFS baseline built; permission denied (root_squash and UID mismatch), firewall on 2049 (security group and `ufw`), stale file handle, hung hard mount | ✅ | [incidents/07-nfs.md](incidents/07-nfs.md) · [notes/storage-lvm-nfs.md](notes/storage-lvm-nfs.md) · [notes/nfs-faults.md](notes/nfs-faults.md) · [kb/nfs-mount-hangs-server-down.md](kb/nfs-mount-hangs-server-down.md) |
+| 8 | EC2 connectivity and Docker containers | SSH to EC2 timing out (stale source IP, deleted port 22 rule), key file permissions; containers that never start, are OOM-killed, are not reachable, or cannot write to a bind mount | ✅ | [incidents/08-docker.md](incidents/08-docker.md) · [kb/ec2-unreachable.md](kb/ec2-unreachable.md) |
 
-Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md). Ubuntu lifecycle and security updates (Day 23), written up in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md). Scripting for support (Day 24), written up in [notes/scripting.md](notes/scripting.md) and [notes/script-reading.md](notes/script-reading.md).
+Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written up in [notes/firewalls.md](notes/firewalls.md). Ubuntu lifecycle and security updates (Day 23), written up in [notes/ubuntu-lifecycle.md](notes/ubuntu-lifecycle.md). Scripting for support (Day 24), written up in [notes/scripting.md](notes/scripting.md) and [notes/script-reading.md](notes/script-reading.md). Capstone ticket 1 (Day 26), written up in [incidents/09-capstone1.md](incidents/09-capstone1.md).
 
 ### Lab 3 progress: TLS
 
@@ -141,8 +144,35 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 | Old errors that looked current | ✅ checked | `journalctl -p err -n 20` showed `networkctl: Interface "br0" not found` (and `v1-br`, `v2-br`, `b2-br`) from 22 Nov. `journalctl -b -p err` showed only the harmless `piix4_smbus` line, `sudo grep -rIl` over `/etc` found nothing, and `ip -br link` showed only `lo` and `ens5`, so the errors are history, most likely from the Lab 5 bridge work. I did not trace which unit called `networkctl`. Lesson: scope logs with `-b` first. |
 | `log_summary.py` | ✅ built | Counts ERROR, WARN, INFO and OTHER per file, with exit codes 1 (usage), 2 (not found), 3 (permission) and 4 (directory). A five-line test file gave 2, 1, 1, 1. On the boot journal (1371 lines) it counted ERROR 22, WARN 3, INFO 70, OTHER 1276. I did not test the permission-denied path. Running it from the wrong folder gave Python's own `can't open file` error, which also exits 2, so the message matters as much as the code. |
 | Text match vs priority filter | ✅ found | `journalctl -b -p err` showed 1 line while the text match counted 22. The 22 were mostly noise (`RAS: Correctable Errors collector`, `regulatory.db ... error -2`, `apport` descriptions), but the SSM agent's `ERROR` lines were not in the `-p err` output either. The likely reason is that the agent does not set a journal priority (not verified). Use both views and read the matching lines before trusting a count. |
-| SSM agent finding | 🟡 to confirm | The agent logged `no EC2 IMDS role found` (HTTP 404) and an `AccessDeniedException`, which points to no IAM instance profile on `lab1`, so Systems Manager would not work as a recovery path here. I have not run the metadata check to confirm. |
+| SSM agent finding | ✅ confirmed | The agent logged `no EC2 IMDS role found` (HTTP 404) and an `AccessDeniedException`. I checked the instance metadata directly: a request to `.../meta-data/iam/info` returned 404, so no IAM instance profile is attached to `lab1`. Systems Manager therefore would not work as a recovery path here. Fixing it would mean attaching a role with SSM permissions (not done). |
 | Script reading | ✅ done | Read `/etc/cron.daily/logrotate` line by line in [notes/script-reading.md](notes/script-reading.md): it exits early on systemd machines (a timer does the work), exits quietly if `logrotate` is removed, saves `$?` immediately, logs an `ALERT` with `logger` on failure and passes the exit code on. I did not run the `systemctl list-timers` check on `lab1`. |
+
+### Lab 8 progress: EC2 connectivity and Docker (Day 25)
+
+| Part | Status | What I found |
+|---|---|---|
+| EC2 "cannot connect" checklist | ✅ written | [kb/ec2-unreachable.md](kb/ec2-unreachable.md) lists eight checks from the outside in: instance state and status checks, public IP, security group, network ACL, route table and internet gateway, key and username, system log, then the OS itself. It also has a table that reads the error text first: a timeout means packets are dropped, "refused" means nothing is listening, and `Permission denied (publickey)` means the server was reached or the client ignored the key. Not reproduced: network ACL, route table, the console system log and Instance Connect. |
+| Fault A: stale source IP | ✅ reproduced | SSH timed out although the security group had SSH, HTTP and HTTPS rules. `curl -4 ifconfig.me` printed a different address from the `/32` source on all three rules, and the "Last login ... from" line in the login banner showed my old address. My ISP had given me a new public IP. Editing the three rules to My IP fixed it at once. A rule made with My IP is a snapshot, and the symptom is the same timeout as a missing rule. |
+| Fault B: deleted port 22 rule | ✅ reproduced | Deleting the SSH rule gave the same `Operation timed out`, so the two faults cannot be told apart from the error text. The way to separate them is to compare the real IP with the rule's source, or to see that no port 22 row exists. I restored the rule. I did not test whether the console Connect button still works with port 22 closed (my reading is that it also uses SSH, so it would not). |
+| Fault C: key permissions | ✅ reproduced | With `chmod 644` on the key, SSH printed `UNPROTECTED PRIVATE KEY FILE`, `Load key ...: bad permissions` and then `Permission denied (publickey)`. The client ignored the key and never sent it, so the last line points at the wrong place. `chmod 400` fixed it. Lesson: read all the output above the last line. |
+| Docker install | ✅ done | `docker.io` 29.1.3 installed from Ubuntu's own repository. I logged out and back in so the `docker` group applied, and `hello-world` ran without `sudo`. |
+| Docker drill 1: container that exits at once | ✅ reproduced | `docker run ubuntu:24.04 nonexistent-cmd` printed an `OCI runtime create failed ... executable file not found` error, `docker logs` was empty and the exit code was 127. I expected the status `Exited`; it was `Created`, meaning the process never started. Reusing the name `t1` failed with `The container name is already in use` until I ran `docker rm`. I pulled `ubuntu:26.04` by mistake and removed it again with `docker rmi`. |
+| Docker drill 2: memory limit | ✅ reproduced | `tail /dev/zero` under `--memory 64m` on `ubuntu:26.04` was not killed: it ran for over four minutes at 1.879MiB, 0.54% CPU and 1 process (`docker stats`). I did not find out why, so my guess that 26.04 uses a different `tail` is not verified (I did not run `tail --version`). A shell loop that doubles a string did get killed: `docker inspect` showed `OOMKilled=true`, exit code 137. `dmesg \| tail` missed the OOM lines because network cleanup lines came after them, but `grep -i -E "oom\|killed process"` found `constraint=CONSTRAINT_MEMCG` (the container's limit, not the whole host) and `Killed process 3115 (bash)` at about 63 MiB. The container ID in the kernel log matched `docker inspect`. A manual `docker kill` also exits 137 but with `OOMKilled=false`. |
+| Docker drill 3: web container not reachable | ✅ reproduced | `curl localhost:80` returned `hello from lab1`, which came from the nginx installed on the instance, not the container: `ss -tulpn` showed the host's nginx on port 80 and `docker port` printed nothing. `curl` to the container's own address (`172.17.0.2`) returned its page, so the container was healthy and only the port was not published. The IP came from `.NetworkSettings.Networks.bridge.IPAddress`; the older `.NetworkSettings.IPAddress` field is gone in 29.1.3. `-p 8080:80` fixed it. The first `curl` right after `docker run -d` gave `Connection reset by peer`; the nginx log shows it never received that request, so the container had not finished starting (my explanation, supported by the log). `docker run -p 80:80` failed with `address already in use` and left the container in `Created`. |
+| Docker drill 4: bind mount permissions | ✅ reproduced | With `/tmp/rootdir` owned by root (mode 755), `touch` from a container running as UID 1000 failed with `Permission denied`. `ls -ld` on the host and inside the container showed the same owner and mode. `chown 1000:1000` fixed it. Running as root also worked, but the file was then owned by root on the host. I did not test volumes or SELinux/AppArmor effects. |
+| Inspection tools | ✅ used | `docker ps -a`, `logs`, `inspect --format`, `stats --no-stream`, `exec`, `port` and `system df`. A container with no limit showed `4.75MiB / 908.6MiB`: the limit shown is the machine's RAM. |
+| Incident write-up | ✅ done | [incidents/08-docker.md](incidents/08-docker.md): five faults, the first command for each symptom, where my results differed from what I expected (`Created` vs `Exited`, `tail` not being killed, a wrong server answering), and a customer reply for the OOM kill. |
+| KB article 3 | ✅ done | [kb/ec2-unreachable.md](kb/ec2-unreachable.md): the checklist, the error table, the stale-IP case, key permissions, recovery options when SSH is not available (and that SSM must be set up in advance) and quick-reference commands. |
+
+### Capstone tickets (Days 26 to 28)
+
+Timed "surprise ticket" practice: 45 minutes to diagnose, 20 for the customer reply, 20 for a KB article or internal note. The fault for ticket 1 came from a script I wrote that picks one of five faults at random and prints nothing, so I knew the possible faults but not which one ran.
+
+| Ticket | Status | What I found |
+|---|---|---|
+| 1: server seems wrong, site loads | ✅ done | My first wording of the ticket ("site down") did not fit. `curl` from outside and on the server both returned 200, and nginx was running and listening on 80 and 443. `df -h` showed `/` at 100% (48M free of 6.7G) and `df -i` showed 18% inodes used, so the cause was real space, not inodes. `du -xh / --max-depth=1` pointed to `/var` (4.2G), and `find -size +500M` named `/var/fill` (3.1G, created 07:13 UTC). `lsof +L1` showed no deleted-but-open file. After `rm`, `/` was at 54% with 3.1G free, `curl` still returned 200, and a `touch` and `rm` write test succeeded. The site stayed up because serving a static page only reads from disk; anything that writes (logs, uploads, `apt`) would have failed. `ss -tlnp \| grep nginx` printed nothing without `sudo` even though nginx was listening, so an empty result can mean no permission. Write-ups: [incidents/09-capstone1.md](incidents/09-capstone1.md) · [replies/09-capstone1.md](replies/09-capstone1.md) · [kb/01-disk-full-root.md](kb/01-disk-full-root.md) |
+| 2 | ⬜ planned | |
+| 3: combination fault | ⬜ planned | |
 
 ---
 
@@ -173,12 +203,15 @@ Also done: firewalls on EC2 (security group vs `ufw`, DROP vs REJECT), written u
 - [Storage: LVM and NFS baseline](notes/storage-lvm-nfs.md) (commands, measurements, the `showmount` hang, root_squash)
 - [NFS fault drills: permissions, firewall, stale handle, hung mount](notes/nfs-faults.md) (commands, measurements, escalation order, mistakes, interview Q&A)
 - [NFS failures: four faults, symptom-to-command table and customer replies](incidents/07-nfs.md)
+- [Docker container failures: five faults, first commands and a customer reply](incidents/08-docker.md)
+- [EC2 instance unreachable over SSH: runbook](kb/ec2-unreachable.md) (eight checks outside in, error table, stale IP, recovery options)
 - [Gate 1 checkpoint results](notes/gate1.md)
 - [Gate 2 checkpoint results](notes/gate2.md)
 - [Gate 3 checkpoint results: LVM, NFS faults and a fresh KVM guest under time](notes/gate3.md)
 - [Ubuntu lifecycle and security updates](notes/ubuntu-lifecycle.md) (LTS and Pro support dates, security update vs SRU, two update traces, 24.04 vs 26.04, customer reply template)
 - [Scripting for support](notes/scripting.md) (healthcheck.sh and log_summary.py: layers, tests, exit codes, stopped vs failed, text vs priority filtering, mistakes, interview Q&A)
 - [Reading someone else's script: `/etc/cron.daily/logrotate`](notes/script-reading.md) (three-pass method, line-by-line explanation, failure points)
+- [Capstone 1: root filesystem full, site still up](incidents/09-capstone1.md) (timeline, hypotheses ruled out, customer reply in [replies/09-capstone1.md](replies/09-capstone1.md), KB article in [kb/01-disk-full-root.md](kb/01-disk-full-root.md))
 
 ---
 
