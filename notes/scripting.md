@@ -203,11 +203,51 @@ Caution for the public repo: the journal lines contain my AWS account ID. Replac
 
 ---
 
-## 8. Interview questions I should be able to answer
+## 8. Interview questions with my answers
 
-1. What does `set -euo pipefail` do, and when would `|| true` be needed with it?
-2. `systemctl --failed` shows nothing but the customer's site is down. What next? (Stopped is not failed: check the unit state, whether the port is listening, then logs.)
-3. How do you read load average? (Three numbers, 1, 5 and 15 minutes, compared with the CPU count from `nproc`.)
-4. `df -h` shows free space but writes fail. (`df -i`, deleted-but-open files, wrong filesystem.)
-5. Why use different exit codes in a script? (So the caller can tell which failure happened.)
-6. How would you tell a real error from noise in a journal? (Scope with `-b`, check priority and text matching, read the matching lines before trusting the count.)
+Each answer is about 30 seconds out loud. Cut the lab example first if it runs long.
+
+### 1. What does `set -euo pipefail` do, and when would `|| true` be needed with it?
+
+It is three safety switches. `-e` stops the script when a command fails. `-u` stops on an unset variable, so a typo is an error instead of silently becoming an empty string. `-o pipefail` makes a pipeline count as failed if any command in it fails, not just the last one.
+
+`|| true` is for a command that is allowed to fail. Without it, `set -e` ends the script at that line. In my healthcheck, `systemctl --failed ... || true` keeps the script going so it can still count the failed units and report a result.
+
+### 2. `systemctl --failed` shows nothing but the customer's site is down. What next?
+
+Stopped is not failed. A service stopped on purpose, or never started, is `inactive`, and `--failed` only lists units that crashed or exited with an error. So I check:
+
+1. `systemctl status <service>` for its real state.
+2. `sudo ss -tulpn` to see whether anything listens on the expected port, and which process owns it.
+3. The logs, scoped to this boot: `journalctl -u <service> -b`.
+4. If the box looks healthy, the layers outside it, such as the security group and `ufw`.
+
+Lab example: with nginx stopped, my first healthcheck said `all checks passed` while the site was down. I fixed it by adding a check that the expected ports are listening.
+
+### 3. How do you read load average?
+
+Three numbers: the average number of runnable processes over the last 1, 5 and 15 minutes. I compare them with the CPU count from `nproc`, because a load of 1.0 is a fully busy single CPU but only half of a two-CPU machine. I also read them as a trend: a high 1-minute number with a low 15-minute number means something just started, and all three high means sustained load. On Linux, load also counts processes waiting on disk, so high load with low CPU can point at I/O.
+
+Lab example: `lab1` showed 1.07, 0.40, 0.15, a short burst that was fading, and the next reading was 0.22, 0.29, 0.13.
+
+### 4. `df -h` shows free space but writes fail. What do you check?
+
+1. **Inodes exhausted:** `df -i`. The disk can have free space but no file entries left. In my lab, a filesystem with 2000 inodes failed at file 1989 with `No space left on device` while `df -h` showed 89M free.
+2. **Deleted but still held open:** `df` stays high while `du` is low. `lsof +L1` shows the process holding the file, and stopping it frees the space.
+3. **Wrong filesystem:** the path may sit on a small separate or RAM-backed filesystem such as `tmpfs`. `df -h <path>` checks the filesystem for that exact path.
+
+If none fit, I check quotas and read-only mounts.
+
+### 5. Why use different exit codes in a script?
+
+So the caller can tell which failure happened without parsing text. Zero means success and anything else means failure. In `log_summary.py` I return 1 for wrong usage, 2 for file not found, 3 for permission denied and 4 for a directory. A cron job or monitoring tool can then react differently to each.
+
+Two things I learned: Python's own `can't open file` error also exits with 2, the same code my script uses for "file not found", so I read the message as well as the code. And behind a pipe, `$?` shows the last command's code, so I use `${PIPESTATUS[0]}` to see the script's own.
+
+### 6. How do you tell a real error from noise in a journal?
+
+I do not trust a count until I have read the lines behind it. First I scope the logs to this boot with `journalctl -b`, because old errors from earlier boots look current. Then I use two views. A priority filter (`-p err`) is clean but can miss programs that write the word ERROR without setting a priority. A text match catches those but also catches noise, such as a feature called "Correctable Errors collector".
+
+Lab example: `-p err` showed one line this boot while a text search found 22. Most were noise, but the SSM agent lines looked real: they said no IAM role was found on the instance. I also checked the old `br0 not found` errors against the config and the live interfaces before calling them leftovers.
+
+Be careful with two points in this answer. The reason `-p err` missed the SSM lines (the agent probably does not set a priority) is my guess, and the missing IAM role is the likely explanation but I have not run the metadata check. Say "my guess is" until I have.
