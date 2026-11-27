@@ -20,8 +20,8 @@ An EC2 server has two firewalls. A connection must pass both.
 - Refused: the host answered no (nothing listening, or ufw reject).
 
 ## Safe way to enable a firewall over SSH
-1. Get my IP as the server sees it: `echo $SSH_CLIENT` (first value, here 223.181.22.111)
-2. Allow it on SSH: `sudo ufw allow from 223.181.22.111 to any port 22 proto tcp`
+1. Get my IP as the server sees it: `echo $SSH_CLIENT` (first value, here MY_HOME_IP)
+2. Allow it on SSH: `sudo ufw allow from MY_HOME_IP to any port 22 proto tcp`
 3. Schedule an escape timer: `echo "ufw --force disable" | sudo at now + 10 minutes`
 4. Set defaults and rules:
    ```bash
@@ -52,7 +52,7 @@ Useful rules in the nft output:
 - `jump ufw-user-input` is where my own rules (80, 443, SSH) live.
 - `log prefix "[UFW BLOCK] "` logs blocked packets to `/var/log/ufw.log`.
 
-## The four experiments (server IP 13.203.203.4, port 8080)
+## The four experiments (server IP SERVER_PUBLIC_IP, port 8080)
 
 | # | Security group | ufw | Result on Mac | Who answered |
 |---|---|---|---|---|
@@ -127,11 +127,11 @@ EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules >
 
 | Error or symptom | Cause | Fix |
 |---|---|---|
-| `nc: getaddrinfo: nodename nor servname provided, or not known` | Typed the placeholder `YOUR_PUBLIC_IP` literally | Use the real public IPv4, e.g. `13.203.203.4` |
+| `nc: getaddrinfo: nodename nor servname provided, or not known` | Typed the placeholder `YOUR_PUBLIC_IP` literally | Use the real public IPv4, e.g. `SERVER_PUBLIC_IP` |
 | `-bash: new-ip: No such file or directory` | Typed `<new-ip>` with the angle brackets; bash reads `<` as "read from a file" | Replace the whole placeholder, brackets included, with the real value |
 | `Operation timed out` on a port | Something dropped it silently | Check the security group, then ufw. A fresh `[UFW BLOCK]` line in the log means ufw did it |
 | `Connection refused` on a port | Nothing listening, or a ufw reject rule | `sudo ss -tlnp \| grep ':<port>'` and `sudo ufw status numbered` |
-| `nc` to port 80 times out even though rules are right | Security group rule source does not match the Mac's current IP, or the rule was never saved | Compare `223.181.22.111/32` against the Mac's real public IP; check the rule has an ID, not `-` |
+| `nc` to port 80 times out even though rules are right | Security group rule source does not match the Mac's current IP, or the rule was never saved | Compare `MY_HOME_IP/32` against the Mac's real public IP; check the rule has an ID, not `-` |
 | `nc` works to the public IP but not `172.31.x.x` | `172.31.10.100` is the private IP and only works inside the VPC | Always use the public IPv4 from the Mac |
 | `at: command not found` | `at` not installed | `sudo apt install -y at` |
 | Escape timer never fires | `atd` is not running | `sudo systemctl enable --now atd`, then `systemctl is-active atd` |
@@ -152,7 +152,7 @@ EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules >
 
 ## Things I learned the hard way
 - `<angle-brackets>` in a command are placeholders. Replace the whole thing, brackets included.
-- Use the public IPv4 (13.203.203.4) from the Mac, not the private one (172.31.10.100).
+- Use the public IPv4 (SERVER_PUBLIC_IP) from the Mac, not the private one (172.31.10.100).
 - `nc` to a port only succeeds if something is listening there, so start a listener first.
 - The server clock is UTC, so `at` job times look different from my local time.
 - Delete ufw rules by number from the highest down, because numbers shift.
@@ -166,7 +166,7 @@ EC2 > Instances > your instance > Security tab > `lab-sg` > Edit inbound rules >
 ufw (verified with `sudo ufw status numbered` after running `sudo ufw allow 22/tcp`):
 ```
 [ 1] 80/tcp         ALLOW IN    Anywhere
-[ 2] 22/tcp         ALLOW IN    223.181.22.111
+[ 2] 22/tcp         ALLOW IN    MY_HOME_IP
 [ 3] 443/tcp        ALLOW IN    Anywhere
 [ 4] 22/tcp         ALLOW IN    Anywhere
 [ 5] 80/tcp (v6)    ALLOW IN    Anywhere (v6)
@@ -182,7 +182,7 @@ Security group (console shows the name `launch-wizard-5`, ID `sg-0a06d7acb1f451b
 | HTTP | 80 | `sgr-0198b54b7826052e6` |
 | HTTPS | 443 | `sgr-0c2b6b6cbb580a5d` |
 
-Sources were set to `223.181.22.111/32` earlier. The Source column was cut off in the last screenshot, so re-check it if my IP changed.
+Sources were set to `MY_HOME_IP/32` earlier. The Source column was cut off in the last screenshot, so re-check it if my IP changed.
 
 Day 10 status: complete. Both layers verified.
 

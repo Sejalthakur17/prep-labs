@@ -23,13 +23,13 @@ A log is a text file where a program records what it did and what went wrong. Mo
 ## Reading one auth.log line
 
 ```
-2026-11-17T07:03:55.343767+00:00 ip-172-31-13-118 sshd-session[1053]: Accepted publickey for ubuntu from 223.181.19.177 port 28205 ssh2: RSA SHA256:mYDr...
+2026-11-17T07:03:55.343767+00:00 ip-172-31-13-118 sshd-session[1053]: Accepted publickey for ubuntu from MY_HOME_IP port 28205 ssh2: RSA SHA256:mYDr...
 ```
 - `2026-11-17T07:03:55...+00:00` is the date and time in **UTC**. India is UTC+5:30, so add 5:30 before telling anyone a local time.
 - `ip-172-31-13-118` is the server's hostname.
 - `sshd-session[1053]` is the program that wrote the line, and its PID.
 - `Accepted publickey` means the login succeeded using a key, not a password.
-- `for ubuntu from 223.181.19.177 port 28205`: the username, my IP, and a random temporary port my Mac used.
+- `for ubuntu from MY_HOME_IP port 28205`: the username, my IP, and a random temporary port my Mac used.
 - `RSA SHA256:...` is the fingerprint (a label) of the key. The same fingerprint on every login means the same key.
 - A login creates two sessions in the log (`tty` and `manager`). That is normal.
 
@@ -100,7 +100,7 @@ Test results:
 ## What I found in my real logs
 
 - Every SSH login was `Accepted publickey`. No failures, because the security group blocks strangers.
-- My public IP changed between Nov 3 (`223.181.19.57`) and Nov 16 (`223.181.19.177`). Home internet providers rotate IPs. If the rule had been a single old `/32`, SSH would have timed out. This is a classic "I could SSH yesterday" ticket.
+- My public IP changed between Nov 3 (`MY_OLD_HOME_IP`) and Nov 16 (`MY_HOME_IP`). Home internet providers rotate IPs. If the rule had been a single old `/32`, SSH would have timed out. This is a classic "I could SSH yesterday" ticket.
 - The same key fingerprint appeared on every login. An unknown fingerprint would be a red flag.
 - `btmp` is 0 bytes because password login is off.
 - The kernel is `7.0.0-1016-aws`, so this is a newer Ubuntu release than I assumed. Check with `lsb_release -a` and record the real version.
