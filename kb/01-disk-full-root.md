@@ -2,7 +2,7 @@
 
 ## Environment
 
-- Ubuntu Server (tested on 24.04 LTS), AWS EC2
+- Ubuntu Server (tested on 26.04 LTS), AWS EC2
 - Root filesystem on a single disk (6.7G in this example)
 - nginx 1.28.3 serving a static page
 
